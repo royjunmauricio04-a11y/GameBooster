@@ -35,7 +35,7 @@ class SupabaseApi(private val store: SessionStore) {
     }
 
     private fun requireConfigured() {
-        if (!configured) throw ApiException("Supabase is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY in local.properties.")
+        if (!configured) throw ApiException("This APK lacks Supabase build settings. Rebuild with the HTTPS project URL and public anon/publishable key.")
     }
 
     private fun parseSession(text: String, fallbackEmail: String): Session {

@@ -44,7 +44,10 @@ fun LoginScreen(st: UiState, vm: MainViewModel) {
     Column(Modifier.fillMaxSize().systemBarsPadding().padding(24.dp), verticalArrangement = Arrangement.Center) {
         Text("Game Booster", fontSize = 30.sp, color = Neon)
         Spacer(Modifier.height(20.dp))
-        if (!st.configured) Banner("Backend not configured yet. Add SUPABASE_URL and SUPABASE_ANON_KEY to local.properties and rebuild.", true)
+        if (!st.configured) Banner(
+            "This APK lacks Supabase build settings. Download the configured APK from the private GitHub release after Actions succeeds. Use only the public anon/publishable key—never a service-role key.",
+            true
+        )
         OutlinedTextField(email, { email = it }, label = { Text("Email") }, singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(8.dp))

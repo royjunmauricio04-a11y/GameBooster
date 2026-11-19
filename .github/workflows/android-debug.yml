@@ -33,11 +33,45 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
+          set -euo pipefail
           if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
             echo "configured=false" >> "$GITHUB_OUTPUT"
             echo "::warning::Supabase secrets are not set; this build will not replace the downloadable APK."
             exit 0
           fi
+          python3 - <<'PY'
+          import base64
+          import json
+          import os
+          import sys
+          from urllib.parse import urlparse
+
+          url = os.environ["SUPABASE_URL"].strip()
+          key = os.environ["SUPABASE_ANON_KEY"].strip()
+          parsed = urlparse(url)
+          if parsed.scheme != "https" or not parsed.hostname:
+              print("SUPABASE_URL must be an HTTPS project URL.", file=sys.stderr)
+              sys.exit(1)
+          if key.startswith("sb_publishable_"):
+              pass
+          elif key.startswith("sb_secret_"):
+              print("Refusing to embed an sb_secret key in the Android APK; use the public publishable key.", file=sys.stderr)
+              sys.exit(1)
+          else:
+              parts = key.split(".")
+              if len(parts) != 3:
+                  print("Use a public sb_publishable key or a legacy anon JWT.", file=sys.stderr)
+                  sys.exit(1)
+              try:
+                  payload = parts[1] + "=" * ((4 - len(parts[1]) % 4) % 4)
+                  role = json.loads(base64.urlsafe_b64decode(payload)).get("role")
+              except Exception:
+                  role = None
+              if role != "anon":
+                  print("Refusing to embed a JWT that is not the public anon key.", file=sys.stderr)
+                  sys.exit(1)
+          print("Public Supabase client key type validated; values were not printed.")
+          PY
           printf 'SUPABASE_URL=%s\n' "$SUPABASE_URL" > local.properties
           printf 'SUPABASE_ANON_KEY=%s\n' "$SUPABASE_ANON_KEY" >> local.properties
           echo "configured=true" >> "$GITHUB_OUTPUT"
@@ -51,7 +85,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           APK="app/build/outputs/apk/debug/app-debug.apk"
-          ASSET="$APK#GameBooster-debug.apk"
+          ASSET="$APK#app-debug.apk"
           if gh release view gamebooster-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload gamebooster-latest "$ASSET" --clobber --repo "$GITHUB_REPOSITORY"
           else
