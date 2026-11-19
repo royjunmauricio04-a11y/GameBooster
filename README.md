@@ -1,5 +1,9 @@
 # Game Booster (Android)
 
+[![Download latest debug APK](https://img.shields.io/badge/Download-Latest%20APK-blue?logo=android)](https://github.com/royjunmauricio04-a11y/GameBooster/releases/download/gamebooster-latest/GameBooster-debug.apk)
+
+> Test/debug build only—not a Play Store release. This repository is private, so only people with repository access can download the APK. The app still needs a configured Supabase project and gateway to connect.
+
 Per-app WireGuard tunnel for games with real, honestly-labelled network measurements.
 Open this folder in Android Studio (it generates the Gradle wrapper).
 
@@ -14,8 +18,8 @@ Open this folder in Android Studio (it generates the Gradle wrapper).
 |---|---|
 | Gateway agent (`gateway/agent.py`) | **Tested**: 22 automated tests (`python3 -m unittest gateway/tests/test_agent.py`) against a fake `wg` and fake Supabase over real HTTP |
 | `gateway/setup.sh` | Syntax-checked only. **Never run** on an OCI VM |
-| Android app | **Never compiled or run.** Brace and cross-reference checks only |
-| `GameInputTest.kt` (JUnit) | Written, **never run** |
+| Android app | **Compiled in GitHub Actions** with Android SDK 34 as a debug APK; not yet tested on a physical device |
+| `GameInputTest.kt` (JUnit) | Run in GitHub Actions |
 | Supabase schema | **Never executed** |
 | Handshake gate, network-change reconnect, foreground service | Unverified on real devices |
 
