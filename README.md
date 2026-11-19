@@ -1,6 +1,6 @@
 # Game Booster (Android)
 
-[![Download latest debug APK](https://img.shields.io/badge/Download-Latest%20APK-blue?logo=android)](https://github.com/royjunmauricio04-a11y/GameBooster/releases/download/gamebooster-latest/GameBooster-debug.apk)
+[![Download latest debug APK](https://img.shields.io/badge/Download-Latest%20APK-blue?logo=android)](https://github.com/royjunmauricio04-a11y/GameBooster/releases/download/gamebooster-latest/app-debug.apk)
 
 > Test/debug build only—not a Play Store release. This repository is private, so only people with repository access can download the APK. The app still needs a configured Supabase project and gateway to connect.
 
