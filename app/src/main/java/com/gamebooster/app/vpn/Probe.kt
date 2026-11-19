@@ -11,6 +11,11 @@ import kotlin.math.abs
 
 /** Real measurement: TCP connect time to host:port (an RTT proxy, not ICMP). Reported as measured. */
 object Probe {
+    /** Resolve once (system DNS, before the tunnel) so before/after probes hit the same IP. */
+    suspend fun resolve(host: String): String? = withContext(Dispatchers.IO) {
+        runCatching { InetAddress.getByName(host).hostAddress }.getOrNull()
+    }
+
     suspend fun run(host: String, port: Int, samples: Int = 8, timeoutMs: Int = 1500): ProbeResult =
         withContext(Dispatchers.IO) {
             val addr = runCatching { InetAddress.getByName(host) }.getOrNull()

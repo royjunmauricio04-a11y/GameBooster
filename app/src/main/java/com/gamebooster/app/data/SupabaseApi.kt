@@ -70,11 +70,11 @@ class SupabaseApi(private val store: SessionStore) {
         return parseSession(text, old.email).also { store.save(it) }
     }
 
-    private fun authed(method: String, url: String, body: String? = null): String {
+    private fun authed(method: String, url: String, body: String? = null, prefer: String = "return=minimal"): String {
         var s = store.load() ?: throw ApiException("Not signed in", 401)
         for (attempt in 0..1) {
             val (code, text) = http(method, url, body, mapOf(
-                "apikey" to anon, "Authorization" to "Bearer ${s.accessToken}", "Prefer" to "return=minimal"))
+                "apikey" to anon, "Authorization" to "Bearer ${s.accessToken}", "Prefer" to prefer))
             if (code == 401 && attempt == 0) { s = refresh(); continue }
             if (code !in 200..299) throw ApiException(errMsg(text, "Request failed ($code)"), code)
             return text
@@ -104,31 +104,90 @@ class SupabaseApi(private val store: SessionStore) {
         }
     }
 
-    suspend fun logConnection(serverId: String, gamePackage: String, success: Boolean) =
+    suspend fun userGames(): List<GameProfile> = withContext(Dispatchers.IO) {
+        requireConfigured()
+        val arr = JSONArray(authed("GET", "$base/rest/v1/user_games?select=*"))
+        (0 until arr.length()).map {
+            val o = arr.getJSONObject(it)
+            GameProfile(o.getString("id"), o.getString("package_name"), o.getString("display_name"),
+                o.getString("probe_host"), o.optInt("probe_port", 443), null, manual = true)
+        }
+    }
+
+    suspend fun addUserGame(packageName: String, label: String, host: String, port: Int) = withContext(Dispatchers.IO) {
+        val uid = store.load()?.userId?.takeIf { it.isNotEmpty() } ?: throw ApiException("Not signed in", 401)
+        val body = JSONObject().put("user_id", uid).put("package_name", packageName).put("display_name", label)
+            .put("probe_host", host).put("probe_port", port).toString()
+        authed("POST", "$base/rest/v1/user_games?on_conflict=user_id,package_name", body,
+            "resolution=merge-duplicates,return=minimal")
+        Unit
+    }
+
+    suspend fun deleteUserGame(id: String) = withContext(Dispatchers.IO) {
+        val safe = java.util.UUID.fromString(id).toString()      // throws unless it is a real UUID (no URL injection)
+        authed("DELETE", "$base/rest/v1/user_games?id=eq.$safe")
+        Unit
+    }
+
+    suspend fun logConnection(serverId: String, gamePackage: String, success: Boolean, reason: String? = null) =
         withContext(Dispatchers.IO) {
-            runCatching {
-                val uid = store.load()?.userId ?: return@runCatching
+            val uid = store.load()?.userId
+            if (!uid.isNullOrEmpty()) runCatching {
                 val body = JSONObject().put("user_id", uid).put("server_id", serverId)
-                    .put("game_package", gamePackage).put("success", success).toString()
+                    .put("game_package", gamePackage).put("success", success).put("reason", reason).toString()
                 authed("POST", "$base/rest/v1/connection_events", body)
             }
             Unit
         }
 
-    /** Ask the gateway agent to authorise this device's public key and assign a tunnel address. */
-    suspend fun register(server: Server, publicKey: String): Registration = withContext(Dispatchers.IO) {
+    /** Best-effort metadata row (public key only; no device name or identifiers). */
+    suspend fun registerDevice(serverId: String, publicKey: String) = withContext(Dispatchers.IO) {
+        val uid = store.load()?.userId
+        if (!uid.isNullOrEmpty()) runCatching {
+            val body = JSONObject().put("user_id", uid).put("server_id", serverId)
+                .put("public_key", publicKey).toString()
+            authed("POST", "$base/rest/v1/devices?on_conflict=public_key", body,
+                "resolution=merge-duplicates,return=minimal")
+        }
+        Unit
+    }
+
+    /** POST to the gateway agent with the user's JWT; refreshes the token once on 401. */
+    private fun gatewayCall(server: Server, path: String, body: String): Pair<Int, String> {
         if (!server.apiUrl.startsWith("https://")) throw ApiException("Server API must use HTTPS.")
         var s = store.load() ?: throw ApiException("Not signed in", 401)
-        val body = JSONObject().put("public_key", publicKey).toString()
+        var last: Pair<Int, String> = 0 to ""
         for (attempt in 0..1) {
-            val (code, text) = http("POST", server.apiUrl.trimEnd('/') + "/register", body,
+            last = http("POST", server.apiUrl.trimEnd('/') + path, body,
                 mapOf("Authorization" to "Bearer ${s.accessToken}"))
-            if (code == 401 && attempt == 0) { s = refresh(); continue }
-            if (code !in 200..299) throw ApiException(errMsg(text, "Gateway rejected registration ($code)"), 0)
-            val j = JSONObject(text)
-            return@withContext Registration(j.getString("address"), j.optString("dns", "1.1.1.1"))
+            if (last.first == 401 && attempt == 0) { s = refresh(); continue }
+            break
         }
-        throw ApiException("Unauthorized", 401)
+        return last
+    }
+
+    /** Ask the gateway agent to authorise this device's public key and assign a tunnel address. */
+    suspend fun register(server: Server, publicKey: String): Registration = withContext(Dispatchers.IO) {
+        val (code, text) = gatewayCall(server, "/register", JSONObject().put("public_key", publicKey).toString())
+        if (code == 401) { store.clearSession(); throw ApiException("Session expired. Please sign in again.", 401) }
+        if (code !in 200..299) throw ApiException(errMsg(text, "Gateway rejected registration ($code)"), 0)
+        val j = JSONObject(text)
+        Registration(j.getString("address"), j.optString("dns", "1.1.1.1"))
+    }
+
+    /** Gateway -> game-host TCP connect time, measured BY THE GATEWAY (host must be in the user's game profiles). */
+    suspend fun gatewayProbe(server: Server, host: String, port: Int): ProbeResult? = withContext(Dispatchers.IO) {
+        val (code, text) = gatewayCall(server, "/probe", JSONObject().put("host", host).put("port", port).toString())
+        if (code !in 200..299) return@withContext null
+        val j = JSONObject(text)
+        ProbeResult(if (j.isNull("avg_ms")) null else j.getDouble("avg_ms"),
+            if (j.isNull("jitter_ms")) null else j.getDouble("jitter_ms"), j.optDouble("loss_pct", 100.0))
+    }
+
+    /** Remove this device's peer from the gateway. 404 (already gone) counts as success. */
+    suspend fun unregister(server: Server, publicKey: String) = withContext(Dispatchers.IO) {
+        val (code, text) = gatewayCall(server, "/revoke", JSONObject().put("public_key", publicKey).toString())
+        if (code !in 200..299 && code != 404) throw ApiException(errMsg(text, "Revoke failed ($code)"), 0)
     }
 
     private fun errMsg(text: String, fallback: String): String = runCatching {

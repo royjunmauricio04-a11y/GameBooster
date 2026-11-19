@@ -17,8 +17,11 @@ data class GameProfile(
     val displayName: String,
     val probeHost: String,
     val probePort: Int,
-    val preferredServerId: String?
+    val preferredServerId: String?,
+    val manual: Boolean = false          // user-added (stored in user_games)
 )
+
+data class InstalledApp(val packageName: String, val label: String)
 
 data class Session(val accessToken: String, val refreshToken: String, val userId: String, val email: String)
 
