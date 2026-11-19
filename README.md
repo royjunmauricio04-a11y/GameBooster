@@ -13,6 +13,13 @@ Open this folder in Android Studio (it generates the Gradle wrapper).
 3. Oracle VM: copy `gateway/` over, `sudo SSH_ALLOW_CIDR=<ip>/32 GW_DOMAIN=<domain> ./setup.sh`, follow the printed steps.
    Open UDP 51820 and TCP 443 in the OCI security list as well as the VM firewall.
 
+### Build a configured APK from a phone
+1. In the private GitHub repository, open **Settings → Secrets and variables → Actions → New repository secret**.
+2. Add `SUPABASE_URL` (the Supabase Project URL) and `SUPABASE_ANON_KEY` (the anon/public key). Do not add a `service_role` key; it must never be bundled in an Android APK.
+3. Open **Actions → Android debug APK → Run workflow** on `main`. After the build succeeds, the README download button points to the updated private debug APK. Only people with repository access can download it.
+
+If either secret is missing, CI can still run tests, but it will not replace the downloadable APK with an unconfigured build. The admin dashboard will need its own server-side secret setup; never put the Supabase `service_role` key in the browser, APK, README, or GitHub source.
+
 ## Verification status
 | Area | State |
 |---|---|

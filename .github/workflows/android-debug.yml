@@ -27,11 +27,26 @@ jobs:
       - name: Install Android platform and build tools
         run: sdkmanager --install "platforms;android-34" "build-tools;34.0.0"
 
+      - name: Configure Supabase build values
+        id: supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Supabase secrets are not set; this build will not replace the downloadable APK."
+            exit 0
+          fi
+          printf 'SUPABASE_URL=%s\n' "$SUPABASE_URL" > local.properties
+          printf 'SUPABASE_ANON_KEY=%s\n' "$SUPABASE_ANON_KEY" >> local.properties
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+
       - name: Run Android tests and assemble debug APK
         run: ./gradlew --no-daemon :app:testDebugUnitTest :app:assembleDebug
 
       - name: Publish private latest APK release
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && steps.supabase.outputs.configured == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
