@@ -1,7 +1,7 @@
 # Game Booster (Android)
 
 Per-app WireGuard tunnel for games, with real latency/jitter/loss measurement.
-Fresh project; open this folder in Android Studio (it will generate the Gradle wrapper).
+Open this folder in Android Studio or build with `./gradlew :app:assembleDebug` (Android SDK 34 required).
 
 ## Plug in credentials later
 1. Copy `local.properties.example` -> `local.properties`; set `SUPABASE_URL` and `SUPABASE_ANON_KEY` (public anon key only).
