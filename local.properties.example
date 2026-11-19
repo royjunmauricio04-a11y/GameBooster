@@ -1,0 +1,4 @@
+# Copy to local.properties (git-ignored) and fill in. Only PUBLIC values go here.
+sdk.dir=/path/to/Android/sdk
+SUPABASE_URL=https://YOUR-PROJECT.supabase.co
+SUPABASE_ANON_KEY=YOUR-ANON-PUBLIC-KEY
