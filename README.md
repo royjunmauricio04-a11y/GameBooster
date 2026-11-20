@@ -13,6 +13,15 @@ Open this folder in Android Studio (it generates the Gradle wrapper).
 3. Oracle VM: copy `gateway/` over, `sudo SSH_ALLOW_CIDR=<ip>/32 GW_DOMAIN=<domain> ./setup.sh`, follow the printed steps.
    Open UDP 51820 and TCP 443 in the OCI security list as well as the VM firewall.
 
+### Email confirmation callback
+The Android sign-up request sends Supabase users to `com.gamebooster.app://auth/callback` after they confirm their email. In the Supabase dashboard, open **Authentication → URL Configuration** and add this exact value under **Additional Redirect URLs**:
+
+```text
+com.gamebooster.app://auth/callback
+```
+
+Do not leave the Supabase **Site URL** set to `http://localhost:3000`; use a real HTTPS page or the app callback appropriate for the project. Email confirmation must remain enabled. The Android app uses only the public anon/publishable key; never use a `service_role` or `sb_secret_…` key in the app or signup request.
+
 ### Build a configured APK from a phone
 1. In the private GitHub repository, open **Settings → Secrets and variables → Actions → New repository secret**.
 2. Add `SUPABASE_URL` (the HTTPS Supabase Project URL) and `SUPABASE_ANON_KEY` (the public anon JWT with `role: anon` or `sb_publishable_…`). The workflow rejects service-role JWTs and `sb_secret_…` keys; never bundle those in an Android APK.

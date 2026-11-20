@@ -7,8 +7,12 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 
 class ApiException(message: String, val code: Int = 0) : Exception(message)
+
+private const val AUTH_CALLBACK_URI = "com.gamebooster.app://auth/callback"
 
 class SupabaseApi(private val store: SessionStore) {
     private val base get() = BuildConfig.SUPABASE_URL.trimEnd('/')
@@ -57,7 +61,8 @@ class SupabaseApi(private val store: SessionStore) {
     suspend fun signUp(email: String, password: String): Session? = withContext(Dispatchers.IO) {
         requireConfigured()
         val body = JSONObject().put("email", email).put("password", password).toString()
-        val (code, text) = http("POST", "$base/auth/v1/signup", body, mapOf("apikey" to anon))
+        val redirect = URLEncoder.encode(AUTH_CALLBACK_URI, StandardCharsets.UTF_8.name())
+        val (code, text) = http("POST", "$base/auth/v1/signup?redirect_to=$redirect", body, mapOf("apikey" to anon))
         if (code !in 200..299) throw ApiException(errMsg(text, "Sign-up failed"), 0)
         if (JSONObject(text).has("access_token")) parseSession(text, email).also { store.save(it) } else null
     }
