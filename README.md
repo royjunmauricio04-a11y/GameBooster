@@ -1,6 +1,6 @@
 # GameBooster (Android)
 
-[![Download latest debug APK](https://img.shields.io/badge/Download-GameBooster%20v0.2.0-blue?logo=android)](https://github.com/royjunmauricio04-a11y/GameBooster/releases/download/gamebooster-latest/GameBooster-v0.2.0.apk)
+[![Download latest debug APK](https://img.shields.io/badge/Download-GameBooster%20v0.3.0-blue?logo=android)](https://github.com/royjunmauricio04-a11y/GameBooster/releases/download/gamebooster-latest/GameBooster-v0.3.0.apk)
 
 > Test/debug build only—not a Play Store release. This repository is private, so only people with repository access can download the APK. The app still needs a configured Supabase project and gateway to connect.
 
@@ -8,7 +8,7 @@ Per-app WireGuard tunnel for games with real, honestly-labelled network measurem
 Open this folder in Android Studio (it generates the Gradle wrapper).
 
 ## Current app version
-`GameBooster v0.2.0` (Android version code 2). The APK asset is versioned so it is clear which build is being installed.
+`GameBooster v0.3.0` (Android version code 3). The APK asset is versioned so it is clear which build is being installed.
 
 ## Plug in credentials later
 1. `local.properties.example` -> `local.properties`: set `SUPABASE_URL`, `SUPABASE_ANON_KEY` (public anon key only).

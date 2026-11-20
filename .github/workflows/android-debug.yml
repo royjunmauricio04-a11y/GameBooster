@@ -85,7 +85,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           APK="app/build/outputs/apk/debug/app-debug.apk"
-          ASSET="$APK#GameBooster-v0.2.0.apk"
+          ASSET="$APK#GameBooster-v0.3.0.apk"
           if gh release view gamebooster-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload gamebooster-latest "$ASSET" --clobber --repo "$GITHUB_REPOSITORY"
           else
