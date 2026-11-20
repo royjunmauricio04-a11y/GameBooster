@@ -151,6 +151,23 @@ class SupabaseApi(private val store: SessionStore) {
             Unit
         }
 
+    /** Best-effort session summary (numbers + server names only; no tokens, keys, email or IPs). */
+    suspend fun uploadSession(r: com.gamebooster.app.core.SessionRecord) = withContext(Dispatchers.IO) {
+        val uid = store.load()?.userId
+        if (!uid.isNullOrEmpty()) runCatching {
+            val iso = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US)
+                .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
+            val body = JSONObject().put("user_id", uid).put("game_package", r.gamePackage)
+                .put("started_at", iso.format(java.util.Date(r.startMs))).put("duration_sec", r.durationSec)
+                .putOpt("before_avg_ms", r.beforeAvgMs).putOpt("avg_ms", r.avgMs).putOpt("p95_ms", r.p95Ms)
+                .putOpt("jitter_ms", r.avgJitterMs).putOpt("loss_pct", r.avgLossPct)
+                .put("samples", r.samples).put("switches", r.switches).put("reconnects", r.reconnects)
+                .put("rx_bytes", r.rxBytes).put("tx_bytes", r.txBytes).put("end_reason", r.endReason).toString()
+            authed("POST", "$base/rest/v1/session_summaries", body)
+        }
+        Unit
+    }
+
     /** Best-effort metadata row (public key only; no device name or identifiers). */
     suspend fun registerDevice(serverId: String, publicKey: String) = withContext(Dispatchers.IO) {
         val uid = store.load()?.userId

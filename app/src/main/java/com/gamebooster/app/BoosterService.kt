@@ -11,10 +11,24 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import com.gamebooster.app.core.OverlayText
+import com.gamebooster.app.overlay.OverlayController
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 
 /** Foreground service whose only job is to keep the process (and BoosterEngine's monitor) alive while connected. */
 class BoosterService : Service() {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var overlay: OverlayController? = null
+    private var overlayJob: Job? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onDestroy() {
+        overlayJob?.cancel(); overlay?.hide(); scope.cancel()
+        super.onDestroy()
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (Build.VERSION.SDK_INT >= 26) {
@@ -29,6 +43,17 @@ class BoosterService : Service() {
             .setContentIntent(open).setOngoing(true).build()
         if (Build.VERSION.SDK_INT >= 34) startForeground(ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         else startForeground(ID, n)
+        if (overlayJob == null) {
+            val ov = OverlayController(this).also { overlay = it }
+            val engine = (application as BoosterApp).engine
+            overlayJob = scope.launch {
+                engine.state.map { s ->
+                    OverlayText.build(s.overlayEnabled, s.connected, s.reconnecting, ov.canDraw(), s.live, s.activeServer?.name)
+                }.distinctUntilChanged().collect { m ->
+                    if (m.visible) { ov.show(); ov.update(m.text, m.level) } else ov.hide()
+                }
+            }
+        }
         return START_NOT_STICKY
     }
 

@@ -8,8 +8,10 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.os.Build
+import android.provider.Settings
 import com.gamebooster.app.BoosterService
 import com.gamebooster.app.BuildConfig
+import com.gamebooster.app.core.*
 import com.gamebooster.app.data.*
 import com.gamebooster.app.vpn.Probe
 import com.gamebooster.app.vpn.TunnelController
@@ -43,6 +45,10 @@ data class UiState(
     val handshakeAgeSec: Long? = null,
     val dns: String? = null,
     val autoReconnect: Boolean = true,
+    val smartSwitch: Boolean = false,                         // auto-switch server when the live path degrades
+    val overlayEnabled: Boolean = false,                      // floating in-game HUD (also needs the system permission)
+    val backups: List<String> = emptyList(),                  // ranked standby routes (names), best first
+    val history: List<SessionRecord> = emptyList(),           // newest first
     val durationSec: Long = 0,
     val rxBytes: Long = 0,
     val txBytes: Long = 0,
@@ -60,10 +66,16 @@ class BoosterEngine(private val app: Application) {
     private val store = SessionStore(app)
     private val api = SupabaseApi(store)
     private val tunnel = TunnelController(app)
+    private val history = HistoryStore(app)
+    private val health = RouteHealth()
+    private val policy = SmartSwitchPolicy()
+    private var recorder: SessionRecorder? = null
+    @Volatile private var switching = false
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val cm = app.getSystemService(ConnectivityManager::class.java)
 
-    private fun freshState() = UiState(configured = api.configured, autoReconnect = store.autoReconnect())
+    private fun freshState() = UiState(configured = api.configured, autoReconnect = store.autoReconnect(),
+        smartSwitch = store.smartSwitch(), overlayEnabled = store.overlayEnabled())
     private val _s = MutableStateFlow(freshState().copy(signedIn = store.load() != null, email = store.load()?.email ?: ""))
     val state: StateFlow<UiState> = _s
 
@@ -91,6 +103,10 @@ class BoosterEngine(private val app: Application) {
 
     init {
         registerNetworkCallback()
+        if (_s.value.signedIn) scope.launch {
+            val h = withContext(Dispatchers.IO) { history.load() }
+            upd { it.copy(history = h.asReversed()) }
+        }
         if (_s.value.signedIn && api.configured) scope.launch { startup() }
     }
 
@@ -115,6 +131,8 @@ class BoosterEngine(private val app: Application) {
         probeAddr = Probe.resolve(game.probeHost)
         lastNetSig = underlyingSignature()
         sessionStart = System.currentTimeMillis()
+        recorder = SessionRecorder(sessionStart, game.packageName, game.displayName, server.name, null)
+        policy.reset()
         note("Resumed existing tunnel (${server.name})")
         upd { it.copy(selectedGame = game, activeServer = server, connected = true, status = "Connected") }
         BoosterService.start(app)
@@ -140,8 +158,10 @@ class BoosterEngine(private val app: Application) {
         val last = store.loadLast()
         val servers = _s.value.servers
         val pub = runCatching { store.deviceKeyPair().publicKey.toBase64() }.getOrNull()
+        recorder = null
         disconnect()
         upd { freshState() }
+        scope.launch(Dispatchers.IO) { history.clear() }
         scope.launch {
             if (last != null && pub != null)
                 servers.firstOrNull { it.id == last.serverId }?.let { runCatching { api.unregister(it, pub) } }
@@ -150,7 +170,9 @@ class BoosterEngine(private val app: Application) {
     }
 
     private fun forceSignOut() {
+        recorder = null
         disconnect()
+        scope.launch(Dispatchers.IO) { history.clear() }
         store.clearSession(); store.clearLast()
         upd { freshState() }
     }
@@ -217,6 +239,22 @@ class BoosterEngine(private val app: Application) {
 
     fun setAutoReconnect(on: Boolean) { store.setAutoReconnect(on); upd { it.copy(autoReconnect = on) } }
 
+    fun setSmartSwitch(on: Boolean) { store.setSmartSwitch(on); policy.resetBaseline(); upd { it.copy(smartSwitch = on) } }
+    fun setOverlay(on: Boolean) { store.setOverlayEnabled(on); upd { it.copy(overlayEnabled = on) } }
+    fun clearHistory() { upd { it.copy(history = emptyList()) }; scope.launch(Dispatchers.IO) { history.clear() } }
+    private fun overlayActive() = _s.value.overlayEnabled && runCatching { Settings.canDrawOverlays(app) }.getOrDefault(false)
+
+    /** Ends the running session, stores it locally and uploads the summary (best effort). Call BEFORE tunnel.down(). */
+    private fun finishSession(reason: String) {
+        val rec = recorder ?: return
+        recorder = null
+        val (rx, tx) = tunnel.traffic(); rec.addTraffic(rx, tx)
+        val r = rec.finish(System.currentTimeMillis(), reason)
+        if (r.durationSec < 10 && r.samples == 0) return          // nothing worth keeping
+        upd { it.copy(history = (listOf(r) + it.history).take(200)) }
+        scope.launch(Dispatchers.IO) { history.append(r); api.uploadSession(r) }
+    }
+
     /** Fresh phone->gateway and gateway->game measurements for every server. */
     fun testServers() { launchBusy {
         gwCache.clear()
@@ -232,6 +270,7 @@ class BoosterEngine(private val app: Application) {
             appendLine("GameBooster ${BuildConfig.VERSION_NAME} | Android API ${Build.VERSION.SDK_INT}")
             appendLine("Status: ${s.status} | auto-reconnect: ${s.autoReconnect}")
             appendLine("Game: ${s.selectedGame?.packageName ?: "-"} | Server: ${s.activeServer?.name ?: "-"} | DNS in tunnel: ${s.dns ?: "-"}")
+            appendLine("Smart switch: ${s.smartSwitch} | overlay: ${s.overlayEnabled} | backups: ${s.backups.ifEmpty { listOf("-") }.joinToString()}")
             appendLine("Handshake age: ${s.handshakeAgeSec?.let { "${it}s" } ?: "none"}")
             appendLine("TCP connect to game host, direct:  ${ms(s.before?.avgMs)} jitter ${ms(s.before?.jitterMs)} loss ${pct(s.before)}")
             appendLine("TCP connect to game host, tunnel:  ${ms(s.live?.avgMs)} jitter ${ms(s.live?.jitterMs)} loss ${pct(s.live)}")
@@ -293,6 +332,7 @@ class BoosterEngine(private val app: Application) {
     }
 
     private fun disconnect() {
+        finishSession("user disconnected")
         monitorJob?.cancel(); reconnectJob?.cancel()
         scope.launch {
             tunnel.down(); store.clearLast(); BoosterService.stop(app); sessionStart = 0
@@ -329,6 +369,7 @@ class BoosterEngine(private val app: Application) {
                 }
                 upd { it.copy(dns = reg.dns) }
                 note("Handshake OK with ${server.name}")
+                health.recordSuccess(server.id)
                 return server
             } catch (e: CancellationException) { throw e
             } catch (e: HandshakeException) { lastError = e; reason = "handshake"; note(e.message ?: "handshake failed")
@@ -336,6 +377,7 @@ class BoosterEngine(private val app: Application) {
                 if (e.code == 401) throw e
                 lastError = e; reason = "register"; note("${server.name}: ${e.message}")
             } catch (e: Exception) { lastError = e; note("${server.name}: ${e.message ?: e.javaClass.simpleName}") }
+            health.recordFailure(server.id, System.currentTimeMillis())
             api.logConnection(server.id, game.packageName, false, reason)
             tried += server.id; attempt++; candidate = null
             if (!allowFailover) break
@@ -356,8 +398,14 @@ class BoosterEngine(private val app: Application) {
         store.saveLast(game.packageName, server.id)
         if (sessionStart == 0L) sessionStart = System.currentTimeMillis()
         lastNetSig = underlyingSignature(); wasOffline = false
+        val rec = recorder
+        if (rec == null) {
+            policy.reset()
+            recorder = SessionRecorder(sessionStart, game.packageName, game.displayName, server.name, _s.value.before)
+        } else { rec.noteServer(server.name); policy.resetBaseline() }
         upd { it.copy(connected = true, reconnecting = false, busy = false, activeServer = server, status = "Connected") }
         startMonitor(game)
+        updateBackups()
         api.registerDevice(server.id, store.deviceKeyPair().publicKey.toBase64())
         api.logConnection(server.id, game.packageName, true)
     }
@@ -373,30 +421,87 @@ class BoosterEngine(private val app: Application) {
         return r
     }
 
+    private data class Measured(val server: Server, val own: ProbeResult, val gw: ProbeResult?, val cost: Double)
+
     /**
-     * Reachable servers first, ordered by an ESTIMATE of path cost: phone->gateway + gateway->game (+ loss penalty).
-     * It is an estimate, not an end-to-end measurement; servers without a gateway->game number get a fixed penalty.
+     * Phone->gateway + gateway->game for each server. With [bound] the phone->gateway probe is bound to the
+     * physical network, so it works (and is honest) while our own tunnel is up.
      */
-    private suspend fun rankServers(servers: List<Server>, game: GameProfile? = null): List<Server> = coroutineScope {
-        val results = servers.map { s -> async {
-            val own = Probe.run(s.host, s.probePort, 4)
+    private suspend fun measureServers(servers: List<Server>, game: GameProfile?, bound: Boolean): List<Measured> = coroutineScope {
+        val net = if (bound) underlyingNetwork() else null
+        val res = servers.map { s -> async {
+            val own = Probe.run(s.host, s.probePort, 4, network = net)
             val gw = if (game != null && own.ok) gatewayToGame(s, game) else null
-            Triple(s, own, gw)
+            Measured(s, own, gw, if (own.ok) score(own, gw, game != null) else PathScore.UNREACHABLE)
         } }.awaitAll()
+        val ids = res.map { it.server.id }.toSet()
         upd { st -> st.copy(
-            serverRtts = results.associate { (s, own, _) -> s.id to own },
-            gatewayToGame = results.mapNotNull { (s, _, gw) -> gw?.takeIf { it.ok }?.let { s.id to it } }.toMap()) }
-        results.sortedWith(compareBy<Triple<Server, ProbeResult, ProbeResult?>>(
-            { !it.second.ok }, { score(it.second, it.third, game != null) })).map { it.first }
+            serverRtts = st.serverRtts + res.associate { it.server.id to it.own },
+            gatewayToGame = st.gatewayToGame.filterKeys { it !in ids } +
+                res.mapNotNull { m -> m.gw?.takeIf { it.ok }?.let { m.server.id to it } }.toMap()) }
+        res
+    }
+
+    /**
+     * Reachable servers first, then servers whose circuit breaker is not tripped, then by an ESTIMATE of path cost:
+     * phone->gateway + gateway->game (+ loss/jitter penalty). An estimate, not an end-to-end measurement;
+     * servers without a gateway->game number get a fixed penalty.
+     */
+    private suspend fun rankServers(servers: List<Server>, game: GameProfile? = null): List<Server> {
+        val results = measureServers(servers, game, bound = false)
+        val now = System.currentTimeMillis()
+        return results.sortedWith(compareBy<Measured>({ !it.own.ok }, { health.isBlocked(it.server.id, now) }, { it.cost }))
+            .map { it.server }
     }
 
     private fun score(own: ProbeResult, gw: ProbeResult?, wantGw: Boolean): Double {
         val gwPart = when {
-            gw != null && gw.ok -> gw.avgMs!! + gw.lossPct * 5
+            gw != null && gw.ok -> PathScore.cost(gw)
             wantGw -> UNKNOWN_GW_PENALTY_MS
             else -> 0.0
         }
-        return (own.avgMs ?: 0.0) + own.lossPct * 5 + gwPart
+        return PathScore.cost(own) + gwPart
+    }
+
+    /** Standby routes shown in the UI, derived from the latest measurements (no extra probing). */
+    private fun updateBackups() {
+        val st = _s.value
+        val active = st.activeServer ?: return
+        val now = System.currentTimeMillis()
+        val names = st.servers.filter { it.id != active.id && st.serverRtts[it.id]?.ok == true }
+            .sortedWith(compareBy<Server>({ health.isBlocked(it.id, now) }, { score(st.serverRtts.getValue(it.id), st.gatewayToGame[it.id], true) }))
+            .take(3).map { it.name }
+        upd { it.copy(backups = names) }
+    }
+
+    // ---------- smart switching ----------
+    /** Look for a clearly better route while connected; switch only past the policy's margin. */
+    private fun evaluateSwitch(game: GameProfile, reason: String, liveCost: Double) {
+        if (switching) return
+        switching = true
+        scope.launch {
+            try {
+                val st = _s.value
+                val active = st.activeServer
+                if (!st.connected || st.reconnecting || active == null) return@launch
+                if (underlyingNetwork() == null) return@launch       // can't probe candidates without going through our own tunnel
+                policy.markEvaluated(System.currentTimeMillis())
+                note("Smart switch: ${active.name} looks bad ($reason); checking alternatives")
+                val now = System.currentTimeMillis()
+                val best = measureServers(st.servers.filter { it.id != active.id }, game, bound = true)
+                    .filter { it.own.ok && !health.isBlocked(it.server.id, now) }
+                    .minByOrNull { it.cost }
+                updateBackups()
+                if (best == null) { note("Smart switch: no reachable alternative"); return@launch }
+                if (_s.value.activeServer?.id != active.id || !_s.value.connected) return@launch   // state moved on meanwhile
+                if (policy.shouldSwitch(liveCost, best.cost)) {
+                    note("Smart switch: ${active.name} -> ${best.server.name} (cost %.0f -> ~%.0f)".format(Locale.US, liveCost, best.cost))
+                    recorder?.noteSwitch()
+                    policy.onSwitched(System.currentTimeMillis())
+                    reconnect(game, immediate = true, target = best.server)
+                } else note("Smart switch: staying on ${active.name}; ${best.server.name} is not clearly better")
+            } finally { switching = false }
+        }
     }
 
     // ---------- monitoring (cheap while hidden: liveness check every 5 s, no probes) ----------
@@ -417,26 +522,39 @@ class BoosterEngine(private val app: Application) {
                     onTunnelLost(game, if (!up) "VPN service stopped" else "no recent handshake")
                     return@launch
                 }
-                if (uiVisible) {
+                val overlayOn = overlayActive()
+                val smartOn = _s.value.smartSwitch
+                val showStats = uiVisible || overlayOn
+                if (showStats) {
                     val (rx, tx) = tunnel.traffic()
                     upd { it.copy(durationSec = (now - sessionStart) / 1000, rxBytes = rx, txBytes = tx, handshakeAgeSec = age) }
-                    if (!probing && now - lastProbe >= 10_000) {
-                        probing = true; lastProbe = now
-                        launch {
-                            try { val r = Probe.run(probeAddr ?: game.probeHost, game.probePort, 5); upd { it.copy(live = r) } }
-                            finally { probing = false }
-                        }
+                }
+                // Probe cadence: 5 s with the overlay, 10 s with the UI open, 15 s for smart switching while hidden,
+                // otherwise a light 3-sample probe every 60 s so session history still gets data.
+                val every = when { overlayOn -> 5_000L; uiVisible -> 10_000L; smartOn -> 15_000L; else -> 60_000L }
+                if (!probing && now - lastProbe >= every) {
+                    probing = true; lastProbe = now
+                    launch {
+                        try {
+                            val r = Probe.run(probeAddr ?: game.probeHost, game.probePort, if (showStats || smartOn) 5 else 3)
+                            upd { it.copy(live = r) }
+                            recorder?.addSample(r)
+                            if (smartOn) policy.onSample(System.currentTimeMillis(), r)?.let { evaluateSwitch(game, it, PathScore.cost(r)) }
+                        } finally { probing = false }
                     }
                 }
-                delay(if (uiVisible) 1000 else 5000)
+                delay(if (showStats) 1000 else 5000)
             }
         }
     }
 
     private fun onTunnelLost(game: GameProfile, reason: String, immediate: Boolean = false) {
         note("Tunnel lost: $reason")
+        // a dead tunnel that is not just a network change counts against the server (circuit breaker)
+        if (!immediate) _s.value.activeServer?.let { health.recordFailure(it.id, System.currentTimeMillis()) }
         if (_s.value.autoReconnect) { reconnect(game, immediate); return }
         monitorJob?.cancel()
+        finishSession("connection lost")
         scope.launch {
             tunnel.down(); store.clearLast(); BoosterService.stop(app); sessionStart = 0
             upd { it.copy(connected = false, status = "Disconnected", activeServer = null, live = null,
@@ -446,15 +564,21 @@ class BoosterEngine(private val app: Application) {
 
     // ---------- network change ----------
     /** Best non-VPN validated network (prefers Wi-Fi). The signature changes when the underlying link changes. */
-    private fun underlyingSignature(): String? = runCatching {
+    private fun underlyingPick(): Pair<Network, NetworkCapabilities>? = runCatching {
         val nets = cm.allNetworks.mapNotNull { n -> cm.getNetworkCapabilities(n)?.let { n to it } }.filter { (_, c) ->
             c.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
             c.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN) &&
             c.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
         }
         val pick = nets.firstOrNull { it.second.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) } ?: nets.firstOrNull()
-        pick?.let { (if (it.second.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) "wifi:" else "other:") + it.first }
+        pick
     }.getOrNull()
+
+    private fun underlyingSignature(): String? = underlyingPick()?.let { (n, c) ->
+        (if (c.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) "wifi:" else "other:") + n
+    }
+
+    private fun underlyingNetwork(): Network? = underlyingPick()?.first
 
     private fun registerNetworkCallback() {
         val req = NetworkRequest.Builder().addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).build()
@@ -485,19 +609,26 @@ class BoosterEngine(private val app: Application) {
     }
 
     // ---------- reconnect ----------
-    private fun reconnect(game: GameProfile, immediate: Boolean = false) {
+    /** [target] = a specific server to move to (smart switch); null = retry the current one, then fail over. */
+    private fun reconnect(game: GameProfile, immediate: Boolean = false, target: Server? = null) {
         monitorJob?.cancel(); reconnectJob?.cancel()
         reconnectJob = scope.launch {
             val st = _s.value
-            upd { it.copy(connected = false, reconnecting = true, live = null, handshakeAgeSec = null, status = "Reconnecting…") }
+            val (rx, tx) = tunnel.traffic(); recorder?.addTraffic(rx, tx)       // counters restart with the next tunnel
+            if (target == null) recorder?.noteReconnect()
+            upd { it.copy(connected = false, reconnecting = true, live = null, handshakeAgeSec = null,
+                status = if (target != null) "Switching route…" else "Reconnecting…") }
             tunnel.down()
             try {
-                val server = establish(game, st.activeServer, allowFailover = true, maxAttempts = 4,
-                    firstDelayMs = if (immediate) 300L else 1500L, label = "Reconnecting")
+                // A server whose breaker is tripped is not retried first: go straight to the best backup.
+                val first = target ?: st.activeServer?.takeUnless { health.isBlocked(it.id, System.currentTimeMillis()) }
+                val server = establish(game, first, allowFailover = true, maxAttempts = 4,
+                    firstDelayMs = if (immediate) 300L else 1500L, label = if (target != null) "Switching" else "Reconnecting")
                 onEstablished(game, server)
             } catch (e: CancellationException) { throw e
             } catch (e: Exception) {
                 if (e is ApiException && e.code == 401) { forceSignOut(); return@launch }
+                finishSession("reconnect failed")
                 tunnel.down(); store.clearLast(); BoosterService.stop(app); sessionStart = 0
                 note("Reconnect failed: ${e.message}")
                 upd { it.copy(reconnecting = false, connected = false, status = "Disconnected", activeServer = null,

@@ -72,5 +72,10 @@ class SessionStore(private val context: Context) {
     fun autoReconnect(): Boolean = prefs.getBoolean("auto_reconnect", true)
     fun setAutoReconnect(on: Boolean) = prefs.edit().putBoolean("auto_reconnect", on).apply()
 
+    fun smartSwitch(): Boolean = prefs.getBoolean("smart_switch", false)
+    fun setSmartSwitch(on: Boolean) = prefs.edit().putBoolean("smart_switch", on).apply()
+    fun overlayEnabled(): Boolean = prefs.getBoolean("overlay", false)
+    fun setOverlayEnabled(on: Boolean) = prefs.edit().putBoolean("overlay", on).apply()
+
     private companion object { const val FILE = "secure_store" }
 }
