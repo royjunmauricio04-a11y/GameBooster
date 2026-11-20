@@ -143,6 +143,7 @@ private fun ConnectTab(st: UiState, vm: MainViewModel) {
 }
 
 private enum class ServerOrder { BEST_PING, LOWEST_LOSS, MANUAL }
+private val supportedRegions = listOf("Philippines", "Indonesia", "Malaysia", "Japan", "Hong Kong")
 
 @Composable
 private fun ServerBrowser(st: UiState, vm: MainViewModel, locked: Boolean, preferredName: String?) {
@@ -171,6 +172,17 @@ private fun ServerBrowser(st: UiState, vm: MainViewModel, locked: Boolean, prefe
     if (servers.isEmpty()) {
         Text("No servers configured yet. Add enabled rows to public.servers in Supabase.", color = Color.Gray, fontSize = 12.sp,
             modifier = Modifier.padding(top = 10.dp))
+        Text("Supported regions", color = Color.White, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp, bottom = 6.dp))
+        supportedRegions.chunked(2).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+                row.forEach { region ->
+                    AssistChip(onClick = {}, enabled = false, label = { Text(region) }, modifier = Modifier.weight(1f))
+                }
+                if (row.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+        Text("Regions become connectable after an authorized GameBooster gateway is deployed and passes health checks.",
+            color = Color.Gray, fontSize = 11.sp)
     } else {
         servers.forEach { server ->
             val probe = st.serverRtts[server.id]
