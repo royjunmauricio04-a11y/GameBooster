@@ -17,7 +17,8 @@
     <application
         android:name=".BoosterApp"
         android:allowBackup="false"
-        android:label="Game Booster"
+        android:icon="@mipmap/ic_launcher"
+        android:label="GameBooster"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.NoActionBar">
         <activity android:name=".MainActivity" android:exported="true">
