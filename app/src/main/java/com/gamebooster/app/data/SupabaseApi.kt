@@ -94,7 +94,13 @@ class SupabaseApi(private val store: SessionStore) {
             val o = arr.getJSONObject(it)
             Server(o.getString("id"), o.getString("name"), o.optString("location"), o.getString("host"),
                 o.optInt("wg_port", 51820), o.getString("wg_public_key"), o.getString("api_url"),
-                o.optInt("probe_port", 443))
+                o.optInt("probe_port", 443),
+                o.optString("country").takeIf { it.isNotBlank() },
+                o.optString("region").takeIf { it.isNotBlank() },
+                o.optString("provider").takeIf { it.isNotBlank() },
+                o.optInt("bandwidth_mbps").takeIf { o.has("bandwidth_mbps") && !o.isNull("bandwidth_mbps") },
+                o.optInt("capacity_devices").takeIf { o.has("capacity_devices") && !o.isNull("capacity_devices") },
+                o.optString("last_health_status").takeIf { it.isNotBlank() })
         }
     }
 

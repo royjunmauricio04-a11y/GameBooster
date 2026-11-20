@@ -8,7 +8,13 @@ data class Server(
     val wgPort: Int,
     val publicKey: String,     // server WireGuard PUBLIC key (not secret)
     val apiUrl: String,        // https URL of the gateway registration agent
-    val probePort: Int
+    val probePort: Int,
+    val country: String? = null,
+    val region: String? = null,
+    val provider: String? = null,
+    val bandwidthMbps: Int? = null,
+    val capacityDevices: Int? = null,
+    val healthStatus: String? = null
 )
 
 data class GameProfile(

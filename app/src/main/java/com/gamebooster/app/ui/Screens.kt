@@ -119,12 +119,8 @@ private fun ConnectTab(st: UiState, vm: MainViewModel) {
             Picker("Game", st.selectedGame?.displayName ?: if (st.games.isEmpty()) "No supported games installed" else "Select",
                 st.games.map { it.displayName }, !locked) { vm.selectGame(st.games[it]) }
             Spacer(Modifier.height(8.dp))
-            val rtt = st.serverRtts
             val pref = st.selectedGame?.let { g -> st.servers.firstOrNull { it.id == st.gamePrefs[g.packageName] }?.name }
-            Picker("Server", st.selectedServer?.name ?: (pref?.let { "Preferred: $it" } ?: "Automatic (best estimated path)"),
-                listOf("Automatic / preferred") + st.servers.map { s ->
-                    "${s.name} — ${s.location}" + (rtt[s.id]?.avgMs?.let { " (${"%.0f".format(it)} ms to gateway)" } ?: "")
-                }, !locked) { vm.selectServer(if (it == 0) null else st.servers[it - 1]) }
+            ServerBrowser(st, vm, locked, pref)
         }
 
         Panel {
@@ -142,6 +138,82 @@ private fun ConnectTab(st: UiState, vm: MainViewModel) {
             Text("Traffic", fontSize = 16.sp)
             MetricRow("Downloaded", fmtBytes(st.rxBytes), "")
             MetricRow("Uploaded", fmtBytes(st.txBytes), "")
+        }
+    }
+}
+
+private enum class ServerOrder { BEST_PING, LOWEST_LOSS, MANUAL }
+
+@Composable
+private fun ServerBrowser(st: UiState, vm: MainViewModel, locked: Boolean, preferredName: String?) {
+    var order by remember { mutableStateOf(ServerOrder.BEST_PING) }
+    val servers = when (order) {
+        ServerOrder.BEST_PING -> st.servers.sortedWith(compareBy({ st.serverRtts[it.id]?.avgMs == null }, { st.serverRtts[it.id]?.avgMs ?: Double.MAX_VALUE }))
+        ServerOrder.LOWEST_LOSS -> st.servers.sortedWith(compareBy({ st.serverRtts[it.id]?.lossPct == null }, { st.serverRtts[it.id]?.lossPct ?: 100.0 }, { st.serverRtts[it.id]?.avgMs ?: Double.MAX_VALUE }))
+        ServerOrder.MANUAL -> st.servers
+    }
+    Text("Server", fontSize = 12.sp, color = Color.Gray)
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+        FilterChip(selected = order == ServerOrder.BEST_PING, onClick = { order = ServerOrder.BEST_PING }, label = { Text("Best ping") })
+        FilterChip(selected = order == ServerOrder.LOWEST_LOSS, onClick = { order = ServerOrder.LOWEST_LOSS }, label = { Text("Lowest loss") })
+        FilterChip(selected = order == ServerOrder.MANUAL, onClick = { order = ServerOrder.MANUAL }, label = { Text("Manual") })
+    }
+    Spacer(Modifier.height(8.dp))
+    ServerChoice(
+        name = "Automatic route",
+        detail = preferredName?.let { "Preferred: $it • measured best path" } ?: "Measures ping and packet loss before connecting",
+        ping = null,
+        loss = null,
+        selected = st.selectedServer == null,
+        enabled = !locked,
+        onClick = { vm.selectServer(null) }
+    )
+    if (servers.isEmpty()) {
+        Text("No servers configured yet. Add enabled rows to public.servers in Supabase.", color = Color.Gray, fontSize = 12.sp,
+            modifier = Modifier.padding(top = 10.dp))
+    } else {
+        servers.forEach { server ->
+            val probe = st.serverRtts[server.id]
+            ServerChoice(
+                name = server.name,
+                detail = listOfNotNull(server.country, server.region ?: server.location, server.provider).joinToString(" • ").ifBlank { server.location },
+                ping = probe?.avgMs,
+                loss = probe?.lossPct,
+                selected = st.selectedServer?.id == server.id,
+                enabled = !locked,
+                onClick = { vm.selectServer(server) }
+            )
+        }
+    }
+    OutlinedButton({ vm.testServers() }, enabled = !locked && !st.busy && st.servers.isNotEmpty(), modifier = Modifier.fillMaxWidth()) {
+        Text(if (st.serverRtts.isEmpty()) "Measure server ping" else "Refresh ping measurements")
+    }
+}
+
+@Composable
+private fun ServerChoice(name: String, detail: String, ping: Double?, loss: Double?, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    val quality = when {
+        ping == null -> Color.Gray
+        ping < 80 && (loss ?: 0.0) < 5 -> Neon
+        ping < 160 && (loss ?: 0.0) < 10 -> Color(0xFFFFC857)
+        else -> Color(0xFFFF6B6B)
+    }
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        color = if (selected) Color(0xFF203A3A) else Color(0xFF202532),
+        shape = MaterialTheme.shapes.medium,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+    ) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(name, color = if (selected) Neon else Color.White, fontSize = 15.sp)
+                Text(detail, color = Color.Gray, fontSize = 11.sp, maxLines = 1)
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(ping?.let { "${it.formatPing()} ms" } ?: "— ms", color = quality, fontSize = 16.sp)
+                Text(loss?.let { "${it.formatLoss()}% loss" } ?: "not measured", color = Color.Gray, fontSize = 10.sp)
+            }
         }
     }
 }
@@ -293,6 +365,8 @@ private fun launchGame(ctx: Context, pkg: String) {
 
 private fun ms(v: Double?) = v?.let { "%.0f ms".format(it) } ?: "—"
 private fun pct(r: ProbeResult?) = r?.let { "%.0f%%".format(it.lossPct) } ?: "—"
+private fun Double.formatPing() = "%.0f".format(this)
+private fun Double.formatLoss() = "%.1f".format(this)
 private fun fmtDur(s: Long) = "%02d:%02d:%02d".format(s / 3600, s % 3600 / 60, s % 60)
 private fun fmtBytes(b: Long) = when {
     b >= 1L shl 30 -> "%.2f GB".format(b / 1073741824.0)
