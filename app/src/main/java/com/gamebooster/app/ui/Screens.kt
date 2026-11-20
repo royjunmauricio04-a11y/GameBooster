@@ -2,6 +2,16 @@ package com.gamebooster.app.ui
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import com.gamebooster.app.core.HistorySummary
+import com.gamebooster.app.core.SessionRecord
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.layout.*
@@ -76,7 +86,8 @@ fun MainScreen(st: UiState, vm: MainViewModel) {
         TabRow(selectedTabIndex = tab, containerColor = Bg, contentColor = Neon) {
             Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Connect") })
             Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Games") })
-            Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Diagnostics") })
+            Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("History") })
+            Tab(selected = tab == 3, onClick = { tab = 3 }, text = { Text("Diagnostics") })
         }
         AnimatedVisibility(visible = st.error != null) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -87,6 +98,7 @@ fun MainScreen(st: UiState, vm: MainViewModel) {
         when (tab) {
             0 -> ConnectTab(st, vm)
             1 -> GamesTab(st, vm, onUse = { vm.selectGame(it); tab = 0 })
+            2 -> HistoryTab(st, vm)
             else -> DiagnosticsTab(st, vm)
         }
     }
@@ -132,6 +144,16 @@ private fun ConnectTab(st: UiState, vm: MainViewModel) {
             MetricRow("Packet loss", pct(st.before), pct(st.live))
             Text("TCP connect time to one resolved IP of the game's probe host. Not an ICMP ping and not in-game latency. " +
                 "Results vary; no improvement is guaranteed.", fontSize = 11.sp, color = Color.Gray, modifier = Modifier.padding(top = 6.dp))
+        }
+
+        if (st.connected || st.reconnecting) Panel {
+            Text("Route plan", fontSize = 16.sp)
+            Spacer(Modifier.height(6.dp))
+            MetricRow("Active", st.activeServer?.name ?: "—", "")
+            MetricRow("Backups", if (st.backups.isEmpty()) "not ranked yet" else st.backups.joinToString(" › "), "")
+            MetricRow("Smart switch", if (st.smartSwitch) "on" else "off", "")
+            Text("Backups come from the latest server measurements (Diagnostics → Test servers refreshes them). " +
+                "A server that fails twice is skipped for 5 minutes.", fontSize = 11.sp, color = Color.Gray, modifier = Modifier.padding(top = 6.dp))
         }
 
         Panel {
@@ -291,6 +313,7 @@ private fun GamesTab(st: UiState, vm: MainViewModel, onUse: (GameProfile) -> Uni
 @Composable
 private fun DiagnosticsTab(st: UiState, vm: MainViewModel) {
     val clipboard = LocalClipboardManager.current
+    val ctx = LocalContext.current
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Panel {
             Text("Connection", fontSize = 16.sp)
@@ -329,6 +352,21 @@ private fun DiagnosticsTab(st: UiState, vm: MainViewModel) {
                 }
                 Switch(checked = st.autoReconnect, onCheckedChange = { vm.setAutoReconnect(it) })
             }
+            SettingRow("Smart server switching",
+                "While connected, watch the live path and move to a clearly better server if it stays bad. " +
+                "A switch interrupts the tunnel for a few seconds and probes more often (uses more battery).",
+                st.smartSwitch) { vm.setSmartSwitch(it) }
+            SettingRow("In-game overlay",
+                "Floating ping / jitter / loss readout over your game. Needs the \"Display over other apps\" permission.",
+                st.overlayEnabled) { on ->
+                vm.setOverlay(on)
+                if (on && !Settings.canDrawOverlays(ctx)) runCatching {
+                    ctx.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${ctx.packageName}"))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                }
+            }
+            if (st.overlayEnabled && !Settings.canDrawOverlays(ctx))
+                Text("Permission not granted yet: the overlay stays hidden until you allow it.", fontSize = 11.sp, color = Color(0xFFFFC857))
         }
 
         Panel {
@@ -343,7 +381,77 @@ private fun DiagnosticsTab(st: UiState, vm: MainViewModel) {
     }
 }
 
+// ============================== History ==============================
+@Composable
+private fun HistoryTab(st: UiState, vm: MainViewModel) {
+    val sum = remember(st.history) { HistorySummary.of(st.history) }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Panel {
+            Text("Overview", fontSize = 16.sp)
+            Spacer(Modifier.height(6.dp))
+            MetricRow("Sessions", "${sum.sessions}", "")
+            MetricRow("Total time", fmtDur(sum.totalSec), "")
+            MetricRow("TCP connect vs direct", sum.avgLatencyDeltaPct?.let { "%+.0f%%".format(it) } ?: "—", "")
+            MetricRow("Route switches", "${sum.switches}", "")
+            MetricRow("Reconnects", "${sum.reconnects}", "")
+            MetricRow("Data", fmtBytes(sum.rxBytes + sum.txBytes), "")
+            Text("Negative = lower TCP connect time through the tunnel than direct. This is not in-game ping, results vary, " +
+                "and a session with few samples is a rough picture. Sessions are stored on this device (last 200) and " +
+                "a numbers-only summary is uploaded when you are signed in.",
+                fontSize = 11.sp, color = Color.Gray, modifier = Modifier.padding(top = 6.dp))
+        }
+        if (st.history.isEmpty()) Panel { Text("No sessions yet. Connect to a game; each session is saved when you disconnect.", color = Color.Gray) }
+        st.history.take(30).forEach { SessionCard(it) }
+        if (st.history.isNotEmpty()) OutlinedButton({ vm.clearHistory() }) { Text("Clear history") }
+    }
+}
+
+@Composable
+private fun SessionCard(r: SessionRecord) {
+    val whenText = remember(r.startMs) { SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()).format(Date(r.startMs)) }
+    Panel {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(r.gameName, fontSize = 15.sp, modifier = Modifier.weight(1f), maxLines = 1)
+            Text(whenText, fontSize = 12.sp, color = Color.Gray)
+        }
+        Text("${fmtDur(r.durationSec)} • ${r.servers.joinToString(" › ")}", fontSize = 12.sp, color = Color.Gray)
+        Spacer(Modifier.height(6.dp))
+        MetricRow("", "Direct", "Tunnel")
+        MetricRow("TCP connect", ms(r.beforeAvgMs), ms(r.avgMs))
+        MetricRow("Best / p95", ms(r.minMs), ms(r.p95Ms))
+        MetricRow("Jitter", "", ms(r.avgJitterMs))
+        MetricRow("Loss", r.beforeLossPct?.let { "%.0f%%".format(it) } ?: "—", r.avgLossPct?.let { "%.1f%%".format(it) } ?: "—")
+        Sparkline(r.series, Modifier.padding(vertical = 6.dp))
+        Text("${r.samples} samples • ${r.switches} switches • ${r.reconnects} reconnects • ${fmtBytes(r.rxBytes + r.txBytes)} • ended: ${r.endReason}",
+            fontSize = 11.sp, color = Color.Gray)
+    }
+}
+
+@Composable
+private fun Sparkline(values: List<Float>, modifier: Modifier = Modifier) {
+    if (values.size < 2) return
+    Canvas(modifier.fillMaxWidth().height(48.dp)) {
+        val lo = values.min(); val hi = values.max(); val span = (hi - lo).coerceAtLeast(1f)
+        val path = Path()
+        values.forEachIndexed { i, v ->
+            val x = size.width * i / (values.size - 1)
+            val y = size.height - (v - lo) / span * size.height
+            if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        }
+        drawPath(path, Neon, style = Stroke(width = 3f))
+    }
+}
+
 // ============================== Shared bits ==============================
+@Composable private fun SettingRow(title: String, desc: String, checked: Boolean, onChange: (Boolean) -> Unit) =
+    Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Column(Modifier.weight(1f).padding(end = 8.dp)) {
+            Text(title)
+            Text(desc, fontSize = 11.sp, color = Color.Gray)
+        }
+        Switch(checked = checked, onCheckedChange = onChange)
+    }
+
 @Composable private fun Panel(content: @Composable ColumnScope.() -> Unit) =
     Surface(color = CardBg, shape = MaterialTheme.shapes.large, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), content = content)

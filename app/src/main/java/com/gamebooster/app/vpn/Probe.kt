@@ -4,6 +4,7 @@ import com.gamebooster.app.data.ProbeResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import android.net.Network
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -16,14 +17,15 @@ object Probe {
         runCatching { InetAddress.getByName(host).hostAddress }.getOrNull()
     }
 
-    suspend fun run(host: String, port: Int, samples: Int = 8, timeoutMs: Int = 1500): ProbeResult =
+    /** [network]: bind to this (physical) network so the probe does NOT go through our own tunnel. */
+    suspend fun run(host: String, port: Int, samples: Int = 8, timeoutMs: Int = 1500, network: Network? = null): ProbeResult =
         withContext(Dispatchers.IO) {
-            val addr = runCatching { InetAddress.getByName(host) }.getOrNull()
+            val addr = runCatching { if (network != null) network.getByName(host) else InetAddress.getByName(host) }.getOrNull()
                 ?: return@withContext ProbeResult(null, null, 100.0)
             val rtts = ArrayList<Double>()
             repeat(samples) {
                 val t0 = System.nanoTime()
-                val ok = runCatching { Socket().use { it.connect(InetSocketAddress(addr, port), timeoutMs) } }.isSuccess
+                val ok = runCatching { (network?.socketFactory?.createSocket() ?: Socket()).use { it.connect(InetSocketAddress(addr, port), timeoutMs) } }.isSuccess
                 if (ok) rtts.add((System.nanoTime() - t0) / 1_000_000.0)
                 delay(150)
             }

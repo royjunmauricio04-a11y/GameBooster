@@ -29,6 +29,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun removeManualGame(g: GameProfile) = e.removeManualGame(g)
     fun setGameServer(g: GameProfile, s: Server?) = e.setGameServer(g, s)
     fun setAutoReconnect(on: Boolean) = e.setAutoReconnect(on)
+    fun setSmartSwitch(on: Boolean) = e.setSmartSwitch(on)
+    fun setOverlay(on: Boolean) = e.setOverlay(on)
+    fun clearHistory() = e.clearHistory()
     fun dismissError() = e.dismissError()
     fun report(): String = e.diagnosticsReport()
 }

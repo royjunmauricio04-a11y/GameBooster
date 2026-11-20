@@ -108,3 +108,39 @@ revoke all on function public.prune_connection_events(int) from public, anon, au
 --   values ('Oracle Singapore', 'Singapore', 'GATEWAY_IP', 'SERVER_WG_PUBLIC_KEY', 'https://gw.example.com');
 -- insert into game_profiles (package_name, display_name, probe_host)
 --   values ('com.example.game', 'Example Game', 'game-server.example.com');
+
+-- Session analytics (v0.3): one summary row per finished tunnel session, written by the app (best effort).
+-- No tokens, keys, email or IPs. Latencies are TCP connect times to the game's probe host, not in-game ping.
+create table if not exists public.session_summaries (
+  id bigint generated always as identity primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  game_package text not null check (length(game_package) <= 200),
+  started_at timestamptz not null,
+  duration_sec int not null check (duration_sec >= 0),
+  before_avg_ms double precision,
+  avg_ms double precision,
+  p95_ms double precision,
+  jitter_ms double precision,
+  loss_pct double precision,
+  samples int not null default 0,
+  switches int not null default 0,
+  reconnects int not null default 0,
+  rx_bytes bigint not null default 0,
+  tx_bytes bigint not null default 0,
+  end_reason text not null check (length(end_reason) <= 60),
+  created_at timestamptz not null default now()
+);
+create index if not exists session_summaries_user_time on public.session_summaries (user_id, started_at desc);
+alter table public.session_summaries enable row level security;
+create policy "own sessions read" on public.session_summaries
+  for select to authenticated using (user_id = auth.uid());
+create policy "own sessions insert" on public.session_summaries
+  for insert to authenticated with check (user_id = auth.uid());
+create policy "own sessions delete" on public.session_summaries
+  for delete to authenticated using (user_id = auth.uid());
+
+create or replace function public.prune_session_summaries(keep_days int default 180)
+returns void language sql security definer set search_path = public as $$
+  delete from public.session_summaries where created_at < now() - make_interval(days => keep_days);
+$$;
+revoke all on function public.prune_session_summaries(int) from public, anon, authenticated;
