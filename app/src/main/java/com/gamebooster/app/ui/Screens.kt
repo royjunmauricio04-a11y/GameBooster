@@ -14,15 +14,25 @@ import java.util.Date
 import java.util.Locale
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -34,14 +44,19 @@ import com.gamebooster.app.data.GameProfile
 import com.gamebooster.app.data.InstalledApp
 import com.gamebooster.app.data.ProbeResult
 
-private val Neon = Color(0xFF00E5A8)
-private val Bg = Color(0xFF0E1117)
-private val CardBg = Color(0xFF181D27)
+private val Neon = Color(0xFF45F0C2)
+private val Bg = Color(0xFF090D15)
+private val CardBg = Color(0xFF121A28)
+private val CardRaised = Color(0xFF1A2638)
+private val Muted = Color(0xFF97A6BA)
+private val Border = Color(0xFF263449)
+private val Violet = Color(0xFF8B7CFF)
 
 @Composable
 fun BoosterTheme(content: @Composable () -> Unit) = MaterialTheme(
-    colorScheme = darkColorScheme(primary = Neon, onPrimary = Color.Black, background = Bg,
-        surface = CardBg, onSurface = Color.White, onBackground = Color.White, error = Color(0xFFFF6B6B)),
+    colorScheme = darkColorScheme(primary = Neon, onPrimary = Color(0xFF06120F), secondary = Violet,
+        background = Bg, surface = CardBg, surfaceVariant = CardRaised, onSurface = Color(0xFFF4F7FC),
+        onSurfaceVariant = Muted, onBackground = Color(0xFFF4F7FC), error = Color(0xFFFF7188)),
     content = { Surface(Modifier.fillMaxSize(), color = Bg) { content() } }
 )
 
@@ -51,25 +66,32 @@ fun LoginScreen(st: UiState, vm: MainViewModel) {
     var email by remember { mutableStateOf("") }
     var pw by remember { mutableStateOf("") }
     val canSubmit = !st.busy && st.configured && email.isNotBlank() && pw.length >= 6
-    Column(Modifier.fillMaxSize().systemBarsPadding().padding(24.dp), verticalArrangement = Arrangement.Center) {
-        Text("Game Booster", fontSize = 30.sp, color = Neon)
-        Spacer(Modifier.height(20.dp))
-        if (!st.configured) Banner(
-            "This APK lacks Supabase build settings. Download the configured APK from the private GitHub release after Actions succeeds. Use only the public anon/publishable key—never a service-role key.",
-            true
-        )
-        OutlinedTextField(email, { email = it }, label = { Text("Email") }, singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), modifier = Modifier.fillMaxWidth())
-        Spacer(Modifier.height(8.dp))
-        OutlinedTextField(pw, { pw = it }, label = { Text("Password (6+ chars)") }, singleLine = true,
-            visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
-        Spacer(Modifier.height(16.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button({ vm.signIn(email, pw) }, enabled = canSubmit) { Text("Sign in") }
-            OutlinedButton({ vm.signUp(email, pw) }, enabled = canSubmit) { Text("Create account") }
+    Box(Modifier.fillMaxSize().systemBarsPadding().padding(20.dp), contentAlignment = Alignment.Center) {
+        Surface(color = CardBg, shape = RoundedCornerShape(30.dp), border = BorderStroke(1.dp, Border), modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.background(Brush.linearGradient(listOf(Color(0xFF172B37), CardBg, Color(0xFF17172D)))).padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Surface(color = Color(0xFF173B3A), shape = RoundedCornerShape(17.dp), modifier = Modifier.size(54.dp)) {
+                    Icon(Icons.Filled.Bolt, contentDescription = null, tint = Neon, modifier = Modifier.padding(13.dp))
+                }
+                Text("PLAY ON A\nBETTER ROUTE", fontSize = 26.sp, color = Color.White, lineHeight = 31.sp, letterSpacing = .5.sp)
+                Text("Sign in to manage your game routes and sync session summaries.", fontSize = 13.sp, color = Muted)
+                if (!st.configured) Banner(
+                    "This build is missing its public Supabase URL/key. Use the configured private APK; never put a service-role key in the app.", true
+                )
+                OutlinedTextField(email, { email = it }, label = { Text("Email") }, singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(pw, { pw = it }, label = { Text("Password (6+ characters)") }, singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+                Button({ vm.signIn(email, pw) }, enabled = canSubmit, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+                    Text("SIGN IN", letterSpacing = 1.sp)
+                }
+                OutlinedButton({ vm.signUp(email, pw) }, enabled = canSubmit, modifier = Modifier.fillMaxWidth().height(50.dp)) {
+                    Text("CREATE ACCOUNT", letterSpacing = 1.sp)
+                }
+                st.error?.let { Banner(it, true) }
+                st.info?.let { Banner(it, false) }
+            }
         }
-        st.error?.let { Banner(it, true) }
-        st.info?.let { Banner(it, false) }
     }
 }
 
@@ -78,28 +100,50 @@ fun LoginScreen(st: UiState, vm: MainViewModel) {
 fun MainScreen(st: UiState, vm: MainViewModel) {
     var tab by remember { mutableIntStateOf(0) }
     Column(Modifier.fillMaxSize().systemBarsPadding()) {
-        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp),
+        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("Game Booster", fontSize = 22.sp, color = Neon)
-            TextButton({ vm.signOut() }) { Text("Sign out") }
-        }
-        TabRow(selectedTabIndex = tab, containerColor = Bg, contentColor = Neon) {
-            Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Connect") })
-            Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Games") })
-            Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("History") })
-            Tab(selected = tab == 3, onClick = { tab = 3 }, text = { Text("Diagnostics") })
-        }
-        AnimatedVisibility(visible = st.error != null) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(st.error ?: "", color = MaterialTheme.colorScheme.error, fontSize = 13.sp, modifier = Modifier.weight(1f).padding(vertical = 8.dp))
-                TextButton({ vm.dismissError() }) { Text("Dismiss") }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Surface(color = Color(0xFF173B3A), shape = RoundedCornerShape(14.dp)) {
+                    Icon(Icons.Filled.Bolt, contentDescription = null, tint = Neon, modifier = Modifier.padding(9.dp).size(23.dp))
+                }
+                Column {
+                    Text("GAMEBOOSTER", fontSize = 16.sp, color = Color.White, letterSpacing = 1.6.sp)
+                    Text("SMART GAME TUNNEL", fontSize = 9.sp, color = Muted, letterSpacing = 1.2.sp)
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StatusPill(if (st.connected) "PROTECTED" else if (st.reconnecting) "SWITCHING" else "OFFLINE",
+                    if (st.connected) Neon else if (st.reconnecting) Color(0xFFFFC857) else Muted)
+                TextButton({ vm.signOut() }) { Text("Sign out", color = Muted, fontSize = 12.sp) }
             }
         }
-        when (tab) {
-            0 -> ConnectTab(st, vm)
-            1 -> GamesTab(st, vm, onUse = { vm.selectGame(it); tab = 0 })
-            2 -> HistoryTab(st, vm)
-            else -> DiagnosticsTab(st, vm)
+        HorizontalDivider(color = Border.copy(alpha = .7f))
+        AnimatedVisibility(visible = st.error != null) {
+            Surface(color = Color(0xFF351C2A), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Row(Modifier.padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(st.error ?: "", color = Color(0xFFFF9BA9), fontSize = 12.sp, modifier = Modifier.weight(1f).padding(vertical = 5.dp))
+                    TextButton({ vm.dismissError() }) { Text("Close", color = Color(0xFFFFB5C0), fontSize = 12.sp) }
+                }
+            }
+        }
+        Box(Modifier.weight(1f)) {
+            when (tab) {
+                0 -> ConnectTab(st, vm)
+                1 -> GamesTab(st, vm, onUse = { vm.selectGame(it); tab = 0 })
+                2 -> HistoryTab(st, vm)
+                else -> DiagnosticsTab(st, vm)
+            }
+        }
+        NavigationBar(containerColor = Bg, tonalElevation = 0.dp) {
+            val entries = listOf("Home", "Games", "History", "Settings")
+            val icons = listOf(Icons.Filled.Bolt, Icons.Filled.SportsEsports, Icons.Filled.History, Icons.Filled.Settings)
+            entries.forEachIndexed { index, label ->
+                NavigationBarItem(selected = tab == index, onClick = { tab = index },
+                    icon = { Icon(icons[index], contentDescription = label) },
+                    label = { Text(label, fontSize = 10.sp) }, alwaysShowLabel = true,
+                    colors = NavigationBarItemDefaults.colors(selectedIconColor = Neon, selectedTextColor = Neon,
+                        indicatorColor = Color(0xFF173B3A), unselectedIconColor = Muted, unselectedTextColor = Muted))
+            }
         }
     }
 }
@@ -108,26 +152,60 @@ fun MainScreen(st: UiState, vm: MainViewModel) {
 @Composable
 private fun ConnectTab(st: UiState, vm: MainViewModel) {
     val ctx = LocalContext.current
-    val statusColor by animateColorAsState(if (st.connected) Neon else if (st.reconnecting) Color(0xFFFFC857) else Color.Gray, label = "status")
     val locked = st.connected || st.reconnecting
+    val canBoost = st.selectedGame != null && st.servers.isNotEmpty()
+    val statusColor by animateColorAsState(when {
+        st.connected -> Neon
+        st.reconnecting -> Color(0xFFFFC857)
+        canBoost -> Neon
+        else -> Color(0xFFFFC857)
+    }, label = "status")
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Panel {
-            Text(st.status, fontSize = 18.sp, color = statusColor)
-            if (st.connected) Text("${st.activeServer?.name ?: ""} • ${fmtDur(st.durationSec)}", color = Color.Gray)
-            Spacer(Modifier.height(10.dp))
-            Button({ vm.toggle() }, enabled = (!st.busy || st.reconnecting) && st.selectedGame != null,
-                modifier = Modifier.fillMaxWidth().height(52.dp)) {
-                if (st.busy && !st.reconnecting) CircularProgressIndicator(Modifier.size(20.dp), color = Color.Black, strokeWidth = 2.dp)
-                else Text(if (locked) "DISCONNECT" else "CONNECT")
-            }
-            val g = st.selectedGame
-            if (st.connected && g != null) {
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton({ launchGame(ctx, g.packageName) }, modifier = Modifier.fillMaxWidth()) { Text("Launch ${g.displayName}") }
+        Surface(color = CardBg, shape = RoundedCornerShape(28.dp), border = BorderStroke(1.dp, Border), modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.background(Brush.linearGradient(listOf(Color(0xFF172B37), CardBg, Color(0xFF17172D)))).padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Column {
+                        Text("SECURE GAME ROUTE", fontSize = 10.sp, color = Muted, letterSpacing = 1.5.sp)
+                        Text(if (st.connected) "Tunnel active" else if (st.reconnecting) "Optimizing route" else if (canBoost) "Ready when you are" else "Setup needed",
+                            fontSize = 20.sp, color = statusColor)
+                    }
+                    StatusPill(if (st.connected) "LIVE" else if (st.reconnecting) "SWITCHING" else if (canBoost) "READY" else "SETUP",
+                        if (canBoost || locked) statusColor else Color(0xFFFFC857))
+                }
+                Box(Modifier.fillMaxWidth().height(190.dp), contentAlignment = Alignment.Center) {
+                    Canvas(Modifier.size(176.dp)) {
+                        drawCircle(Neon.copy(alpha = if (locked) .20f else .10f), radius = size.minDimension * .49f, style = Stroke(2.dp.toPx()))
+                        drawCircle(Violet.copy(alpha = .12f), radius = size.minDimension * .39f, style = Stroke(1.dp.toPx()))
+                    }
+                    Button(onClick = { vm.toggle() }, enabled = (!st.busy || st.reconnecting) && (canBoost || locked),
+                        modifier = Modifier.size(126.dp), shape = CircleShape,
+                        colors = ButtonDefaults.buttonColors(containerColor = if (locked) Color(0xFF573040) else Neon,
+                            contentColor = if (locked) Color.White else Color(0xFF06120F), disabledContainerColor = Color(0xFF273344))) {
+                        if (st.busy && !st.reconnecting) CircularProgressIndicator(Modifier.size(27.dp), color = Color.White, strokeWidth = 2.dp)
+                        else Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Icon(Icons.Filled.Bolt, contentDescription = null, modifier = Modifier.size(28.dp))
+                            Text(if (locked) "STOP" else if (canBoost) "BOOST" else "SETUP", fontSize = 13.sp, letterSpacing = 1.sp)
+                        }
+                    }
+                }
+                Text(if (st.connected) "${st.activeServer?.name ?: "Secure route"}  •  ${fmtDur(st.durationSec)}"
+                    else if (st.selectedGame == null) "Choose a game to start your secure route"
+                    else if (st.servers.isEmpty()) "Game selected • waiting for an authorized live gateway"
+                    else "Ready to protect ${st.selectedGame.displayName}",
+                    fontSize = 13.sp, color = Muted)
+                val g = st.selectedGame
+                if (st.connected && g != null) {
+                    Spacer(Modifier.height(14.dp))
+                    OutlinedButton({ launchGame(ctx, g.packageName) }, modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Neon)) { Text("LAUNCH ${g.displayName.uppercase(Locale.getDefault())}") }
+                }
             }
         }
 
         Panel {
+            SectionHeading("Your route", "Choose a game and preferred server")
+            Spacer(Modifier.height(12.dp))
             Picker("Game", st.selectedGame?.displayName ?: if (st.games.isEmpty()) "No supported games installed" else "Select",
                 st.games.map { it.displayName }, !locked) { vm.selectGame(st.games[it]) }
             Spacer(Modifier.height(8.dp))
@@ -136,18 +214,21 @@ private fun ConnectTab(st: UiState, vm: MainViewModel) {
         }
 
         Panel {
-            Text("Network quality", fontSize = 16.sp)
-            Spacer(Modifier.height(6.dp))
-            MetricRow("", "Before", "Now")
-            MetricRow("TCP connect", ms(st.before?.avgMs), ms(st.live?.avgMs))
-            MetricRow("Jitter", ms(st.before?.jitterMs), ms(st.live?.jitterMs))
-            MetricRow("Packet loss", pct(st.before), pct(st.live))
+            SectionHeading("Live network quality", "Measured TCP connection quality • not in-game ping")
+            Spacer(Modifier.height(12.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                MetricTile("LATENCY", ms(st.live?.avgMs), "direct ${ms(st.before?.avgMs)}", Neon, Modifier.weight(1f))
+                MetricTile("JITTER", ms(st.live?.jitterMs), "path variation", Violet, Modifier.weight(1f))
+                MetricTile("LOSS", pct(st.live), "packet estimate", if ((st.live?.lossPct ?: 0.0) < 5) Neon else Color(0xFFFFC857), Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(10.dp))
+            MetricRow("Direct / tunnel TCP", "${ms(st.before?.avgMs)} direct", "${ms(st.live?.avgMs)} route")
             Text("TCP connect time to one resolved IP of the game's probe host. Not an ICMP ping and not in-game latency. " +
-                "Results vary; no improvement is guaranteed.", fontSize = 11.sp, color = Color.Gray, modifier = Modifier.padding(top = 6.dp))
+                "Results vary; no improvement is guaranteed.", fontSize = 10.sp, color = Muted, modifier = Modifier.padding(top = 6.dp))
         }
 
         if (st.connected || st.reconnecting) Panel {
-            Text("Route plan", fontSize = 16.sp)
+            SectionHeading("Adaptive route", "Automatic failover and smart switching")
             Spacer(Modifier.height(6.dp))
             MetricRow("Active", st.activeServer?.name ?: "—", "")
             MetricRow("Backups", if (st.backups.isEmpty()) "not ranked yet" else st.backups.joinToString(" › "), "")
@@ -157,7 +238,8 @@ private fun ConnectTab(st: UiState, vm: MainViewModel) {
         }
 
         Panel {
-            Text("Traffic", fontSize = 16.sp)
+            SectionHeading("Session traffic", "Usage for the current connection")
+            Spacer(Modifier.height(8.dp))
             MetricRow("Downloaded", fmtBytes(st.rxBytes), "")
             MetricRow("Uploaded", fmtBytes(st.txBytes), "")
         }
@@ -165,7 +247,6 @@ private fun ConnectTab(st: UiState, vm: MainViewModel) {
 }
 
 private enum class ServerOrder { BEST_PING, LOWEST_LOSS, MANUAL }
-private val supportedRegions = listOf("Philippines", "Indonesia", "Malaysia", "Japan", "Hong Kong")
 
 @Composable
 private fun ServerBrowser(st: UiState, vm: MainViewModel, locked: Boolean, preferredName: String?) {
@@ -192,19 +273,15 @@ private fun ServerBrowser(st: UiState, vm: MainViewModel, locked: Boolean, prefe
         onClick = { vm.selectServer(null) }
     )
     if (servers.isEmpty()) {
-        Text("No servers configured yet. Add enabled rows to public.servers in Supabase.", color = Color.Gray, fontSize = 12.sp,
-            modifier = Modifier.padding(top = 10.dp))
-        Text("Supported regions", color = Color.White, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp, bottom = 6.dp))
-        supportedRegions.chunked(2).forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
-                row.forEach { region ->
-                    AssistChip(onClick = {}, enabled = false, label = { Text(region) }, modifier = Modifier.weight(1f))
-                }
-                if (row.size == 1) Spacer(Modifier.weight(1f))
+        Surface(color = Color(0xFF211F32), shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, Violet.copy(alpha = .3f)),
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                StatusPill("SETUP REQUIRED", Color(0xFFFFC857))
+                Text("No live gateways available", color = Color.White, fontSize = 15.sp)
+                Text("A secure tunnel can start only after an enabled server is published and its authorized GameBooster gateway passes a health check.",
+                    color = Muted, fontSize = 11.sp)
             }
         }
-        Text("Regions become connectable after an authorized GameBooster gateway is deployed and passes health checks.",
-            color = Color.Gray, fontSize = 11.sp)
     } else {
         servers.forEach { server ->
             val probe = st.serverRtts[server.id]
@@ -261,9 +338,12 @@ private fun GamesTab(st: UiState, vm: MainViewModel, onUse: (GameProfile) -> Uni
     var port by remember { mutableStateOf("443") }
     val locked = st.connected || st.reconnecting
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        SectionHeading("Your games", "Choose which apps use the secure game route")
         if (st.games.isEmpty()) Panel {
-            Text("No supported games installed.", fontSize = 16.sp)
-            Text("Install a game from the catalog, or add any installed app manually below.", color = Color.Gray, fontSize = 12.sp)
+            StatusPill("NO GAMES ADDED", Violet)
+            Spacer(Modifier.height(8.dp))
+            Text("Build your game list", fontSize = 16.sp)
+            Text("Refresh the catalog or add an installed app manually. Per-app routing keeps other apps outside the game tunnel.", color = Muted, fontSize = 12.sp)
         }
         st.games.forEach { g ->
             val selected = st.selectedGame?.packageName == g.packageName
@@ -315,6 +395,7 @@ private fun DiagnosticsTab(st: UiState, vm: MainViewModel) {
     val clipboard = LocalClipboardManager.current
     val ctx = LocalContext.current
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        SectionHeading("Diagnostics & settings", "Inspect the tunnel, tune failover and manage the overlay")
         Panel {
             Text("Connection", fontSize = 16.sp)
             Spacer(Modifier.height(6.dp))
@@ -386,15 +467,19 @@ private fun DiagnosticsTab(st: UiState, vm: MainViewModel) {
 private fun HistoryTab(st: UiState, vm: MainViewModel) {
     val sum = remember(st.history) { HistorySummary.of(st.history) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        SectionHeading("Session insights", "A local record of your recent game routes")
         Panel {
-            Text("Overview", fontSize = 16.sp)
-            Spacer(Modifier.height(6.dp))
-            MetricRow("Sessions", "${sum.sessions}", "")
-            MetricRow("Total time", fmtDur(sum.totalSec), "")
-            MetricRow("TCP connect vs direct", sum.avgLatencyDeltaPct?.let { "%+.0f%%".format(it) } ?: "—", "")
+            SectionHeading("All-time overview", "Performance indicators from saved sessions")
+            Spacer(Modifier.height(12.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                MetricTile("SESSIONS", "${sum.sessions}", "saved", Neon, Modifier.weight(1f))
+                MetricTile("PLAY TIME", fmtDur(sum.totalSec), "total", Violet, Modifier.weight(1f))
+                MetricTile("TCP DELTA", sum.avgLatencyDeltaPct?.let { "%+.0f%%".format(it) } ?: "—", "vs direct", if ((sum.avgLatencyDeltaPct ?: 0.0) < 0) Neon else Color(0xFFFFC857), Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(8.dp))
             MetricRow("Route switches", "${sum.switches}", "")
             MetricRow("Reconnects", "${sum.reconnects}", "")
-            MetricRow("Data", fmtBytes(sum.rxBytes + sum.txBytes), "")
+            MetricRow("Data transferred", fmtBytes(sum.rxBytes + sum.txBytes), "")
             Text("Negative = lower TCP connect time through the tunnel than direct. This is not in-game ping, results vary, " +
                 "and a session with few samples is a rough picture. Sessions are stored on this device (last 200) and " +
                 "a numbers-only summary is uploaded when you are signed in.",
@@ -443,6 +528,36 @@ private fun Sparkline(values: List<Float>, modifier: Modifier = Modifier) {
 }
 
 // ============================== Shared bits ==============================
+@Composable
+private fun StatusPill(label: String, color: Color) {
+    Surface(color = color.copy(alpha = .10f), shape = CircleShape, border = BorderStroke(1.dp, color.copy(alpha = .35f))) {
+        Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text("●", fontSize = 7.sp, color = color)
+            Text(label, fontSize = 9.sp, color = color, letterSpacing = .8.sp)
+        }
+    }
+}
+
+@Composable
+private fun SectionHeading(title: String, subtitle: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text(title, fontSize = 16.sp, color = Color.White)
+        Text(subtitle, fontSize = 11.sp, color = Muted)
+    }
+}
+
+@Composable
+private fun MetricTile(label: String, value: String, hint: String, color: Color, modifier: Modifier = Modifier) {
+    Surface(modifier = modifier, color = CardRaised, shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, Border)) {
+        Column(Modifier.padding(horizontal = 11.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(label, fontSize = 9.sp, color = Muted, letterSpacing = .8.sp, maxLines = 1)
+            Text(value, fontSize = 17.sp, color = color, maxLines = 1)
+            Text(hint, fontSize = 9.sp, color = Muted, maxLines = 1)
+        }
+    }
+}
+
 @Composable private fun SettingRow(title: String, desc: String, checked: Boolean, onChange: (Boolean) -> Unit) =
     Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
         Column(Modifier.weight(1f).padding(end = 8.dp)) {
@@ -453,8 +568,8 @@ private fun Sparkline(values: List<Float>, modifier: Modifier = Modifier) {
     }
 
 @Composable private fun Panel(content: @Composable ColumnScope.() -> Unit) =
-    Surface(color = CardBg, shape = MaterialTheme.shapes.large, modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), content = content)
+    Surface(color = CardBg, shape = RoundedCornerShape(22.dp), border = BorderStroke(1.dp, Border), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(17.dp), content = content)
     }
 
 @Composable private fun Banner(text: String, error: Boolean) =

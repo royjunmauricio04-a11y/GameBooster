@@ -17,6 +17,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun signIn(email: String, pw: String) = e.signIn(email, pw)
     fun signUp(email: String, pw: String) = e.signUp(email, pw)
+    fun handleAuthCallback(callback: String?) = e.handleAuthCallback(callback)
     fun signOut() = e.signOut()
     fun refreshCatalog() = e.refreshCatalog()
     fun selectGame(g: GameProfile) = e.selectGame(g)

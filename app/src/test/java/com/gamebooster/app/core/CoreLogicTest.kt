@@ -84,6 +84,12 @@ class RouteHealthTest {
         h.recordFailure("a", 0)
         assertTrue(h.isBlocked("a", 1)); assertFalse(h.isBlocked("b", 1))
     }
+    @Test fun failoverSkipsBlockedAndAlreadyTriedRoutes() {
+        val h = RouteHealth(1, 1000)
+        h.recordFailure("blocked", 0)
+        assertEquals("backup", h.firstEligible(listOf("blocked", "tried", "backup"), setOf("tried"), 500))
+        assertEquals("blocked", h.firstEligible(listOf("blocked", "backup"), emptySet(), 1000))
+    }
 }
 
 class SessionRecorderTest {

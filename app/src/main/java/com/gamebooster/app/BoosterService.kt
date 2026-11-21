@@ -48,7 +48,7 @@ class BoosterService : Service() {
             val engine = (application as BoosterApp).engine
             overlayJob = scope.launch {
                 engine.state.map { s ->
-                    OverlayText.build(s.overlayEnabled, s.connected, s.reconnecting, ov.canDraw(), s.live, s.activeServer?.name)
+                    OverlayText.build(s.overlayEnabled, s.connected, s.reconnecting, s.overlayPermissionGranted, s.live, s.activeServer?.name)
                 }.distinctUntilChanged().collect { m ->
                     if (m.visible) { ov.show(); ov.update(m.text, m.level) } else ov.hide()
                 }

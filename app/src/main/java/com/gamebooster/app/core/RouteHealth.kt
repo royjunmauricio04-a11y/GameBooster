@@ -24,5 +24,9 @@ class RouteHealth(private val failuresToTrip: Int = 2, private val coolDownMs: L
         return true
     }
 
+    /** Selects the highest-ranked route that has not been tried in this attempt and is not currently tripped. */
+    fun firstEligible(orderedIds: List<String>, triedIds: Set<String>, now: Long): String? =
+        orderedIds.firstOrNull { it !in triedIds && !isBlocked(it, now) }
+
     @Synchronized fun clear() = m.clear()
 }

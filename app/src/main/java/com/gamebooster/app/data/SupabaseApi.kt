@@ -6,13 +6,38 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
+import java.net.URI
 import java.net.URL
 import java.net.URLEncoder
+import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 
 class ApiException(message: String, val code: Int = 0) : Exception(message)
 
 private const val AUTH_CALLBACK_URI = "com.gamebooster.app://auth/callback"
+
+internal data class AuthCallbackTokens(val accessToken: String, val refreshToken: String)
+
+internal fun parseAuthCallbackTokens(callback: String): AuthCallbackTokens {
+    val uri = try { URI(callback) } catch (_: Exception) { throw ApiException("Invalid email confirmation link.") }
+    if (uri.scheme?.equals("com.gamebooster.app", true) != true || uri.host?.equals("auth", true) != true || uri.path != "/callback")
+        throw ApiException("This email confirmation link is not for GameBooster.")
+    val params = LinkedHashMap<String, String>()
+    sequenceOf(uri.rawQuery, uri.rawFragment).filterNotNull().forEach { part ->
+        part.split('&').filter { it.isNotEmpty() }.forEach { entry ->
+            val pair = entry.split('=', limit = 2)
+            val key = URLDecoder.decode(pair[0], StandardCharsets.UTF_8.name())
+            val value = URLDecoder.decode(pair.getOrElse(1) { "" }, StandardCharsets.UTF_8.name())
+            params[key] = value
+        }
+    }
+    val error = params["error_description"] ?: params["error"]
+    if (!error.isNullOrBlank()) throw ApiException("Email confirmation failed: $error")
+    val access = params["access_token"].orEmpty()
+    val refresh = params["refresh_token"].orEmpty()
+    if (access.isBlank() || refresh.isBlank()) throw ApiException("The confirmation link did not contain a valid session. Please sign in again.")
+    return AuthCallbackTokens(access, refresh)
+}
 
 class SupabaseApi(private val store: SessionStore) {
     private val base get() = BuildConfig.SUPABASE_URL.trimEnd('/')
@@ -65,6 +90,19 @@ class SupabaseApi(private val store: SessionStore) {
         val (code, text) = http("POST", "$base/auth/v1/signup?redirect_to=$redirect", body, mapOf("apikey" to anon))
         if (code !in 200..299) throw ApiException(errMsg(text, "Sign-up failed"), 0)
         if (JSONObject(text).has("access_token")) parseSession(text, email).also { store.save(it) } else null
+    }
+
+    /** Verify a Supabase email-confirmation callback and persist its session only after Auth validates the token. */
+    suspend fun completeAuthCallback(callback: String): Session = withContext(Dispatchers.IO) {
+        requireConfigured()
+        val tokens = parseAuthCallbackTokens(callback)
+        val (code, text) = http("GET", "$base/auth/v1/user", headers = mapOf(
+            "apikey" to anon, "Authorization" to "Bearer ${tokens.accessToken}"))
+        if (code !in 200..299) throw ApiException(errMsg(text, "Could not verify the email confirmation session."), code)
+        val user = JSONObject(text)
+        val userId = user.optString("id")
+        if (userId.isBlank()) throw ApiException("Supabase returned an invalid user for this confirmation link.")
+        Session(tokens.accessToken, tokens.refreshToken, userId, user.optString("email")).also { store.save(it) }
     }
 
     private fun refresh(): Session {

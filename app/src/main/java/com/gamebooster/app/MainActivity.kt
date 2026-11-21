@@ -2,6 +2,7 @@ package com.gamebooster.app
 
 import android.Manifest
 import android.app.Activity
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -22,9 +23,17 @@ class MainActivity : ComponentActivity() {
     // Probing and live stats pause while the UI is hidden (battery); the liveness check keeps running.
     override fun onStart() { super.onStart(); engine.setUiVisible(true) }
     override fun onStop() { super.onStop(); engine.setUiVisible(false) }
+    override fun onResume() { super.onResume(); engine.refreshOverlayPermission() }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        vm.handleAuthCallback(intent.dataString)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null) vm.handleAuthCallback(intent.dataString)
         setContent {
             BoosterTheme {
                 val st by vm.state.collectAsStateWithLifecycle()
