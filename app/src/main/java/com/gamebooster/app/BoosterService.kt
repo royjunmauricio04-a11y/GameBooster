@@ -48,8 +48,15 @@ class BoosterService : Service() {
             .setContentTitle("Game Booster")
             .setContentText("Tunnel active – monitoring connection")
             .setContentIntent(open).setOngoing(true).build()
-        if (Build.VERSION.SDK_INT >= 34) startForeground(ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-        else startForeground(ID, n)
+        val promotion = requestForegroundService {
+            if (Build.VERSION.SDK_INT >= 34) startForeground(ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            else startForeground(ID, n)
+        }
+        if (promotion.isFailure) {
+            (application as? BoosterApp)?.engine?.onForegroundServiceStartFailed(promotion.exceptionOrNull())
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         if (overlayJob == null) {
             val ov = OverlayController(this).also { overlay = it }
             val engine = (application as BoosterApp).engine
