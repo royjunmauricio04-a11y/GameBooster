@@ -17,6 +17,8 @@ import com.gamebooster.app.vpn.Probe
 import com.gamebooster.app.vpn.TunnelController
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -47,6 +49,7 @@ data class UiState(
     val autoReconnect: Boolean = true,
     val smartSwitch: Boolean = false,                         // auto-switch server when the live path degrades
     val overlayEnabled: Boolean = false,                      // floating in-game HUD (also needs the system permission)
+    val overlayPermissionGranted: Boolean = false,
     val backups: List<String> = emptyList(),                  // ranked standby routes (names), best first
     val history: List<SessionRecord> = emptyList(),           // newest first
     val durationSec: Long = 0,
@@ -69,13 +72,15 @@ class BoosterEngine(private val app: Application) {
     private val history = HistoryStore(app)
     private val health = RouteHealth()
     private val policy = SmartSwitchPolicy()
+    private val historyMutex = Mutex()
     private var recorder: SessionRecorder? = null
     @Volatile private var switching = false
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val cm = app.getSystemService(ConnectivityManager::class.java)
 
     private fun freshState() = UiState(configured = api.configured, autoReconnect = store.autoReconnect(),
-        smartSwitch = store.smartSwitch(), overlayEnabled = store.overlayEnabled())
+        smartSwitch = store.smartSwitch(), overlayEnabled = store.overlayEnabled(),
+        overlayPermissionGranted = runCatching { Settings.canDrawOverlays(app) }.getOrDefault(false))
     private val _s = MutableStateFlow(freshState().copy(signedIn = store.load() != null, email = store.load()?.email ?: ""))
     val state: StateFlow<UiState> = _s
 
@@ -103,10 +108,7 @@ class BoosterEngine(private val app: Application) {
 
     init {
         registerNetworkCallback()
-        if (_s.value.signedIn) scope.launch {
-            val h = withContext(Dispatchers.IO) { history.load() }
-            upd { it.copy(history = h.asReversed()) }
-        }
+        if (_s.value.signedIn) scope.launch { restoreHistory() }
         if (_s.value.signedIn && api.configured) scope.launch { startup() }
     }
 
@@ -143,14 +145,30 @@ class BoosterEngine(private val app: Application) {
     fun signIn(email: String, pw: String) { launchBusy {
         val s = api.signIn(email.trim(), pw)
         upd { it.copy(signedIn = true, email = s.email) }
+        restoreHistory()
         loadCatalog()
     } }
 
     fun signUp(email: String, pw: String) { launchBusy {
         val s = api.signUp(email.trim(), pw)
         if (s == null) upd { it.copy(info = "Check your email to confirm your account, then sign in.") }
-        else { upd { it.copy(signedIn = true, email = s.email) }; loadCatalog() }
+        else { upd { it.copy(signedIn = true, email = s.email) }; restoreHistory(); loadCatalog() }
     } }
+
+    fun handleAuthCallback(callback: String?) {
+        if (callback.isNullOrBlank()) return
+        launchBusy {
+            val session = api.completeAuthCallback(callback)
+            upd { it.copy(signedIn = true, email = session.email, info = "Email confirmed. You are signed in.") }
+            restoreHistory()
+            loadCatalog()
+        }
+    }
+
+    private suspend fun restoreHistory() {
+        val records = historyMutex.withLock { withContext(Dispatchers.IO) { history.load() } }
+        upd { it.copy(history = records.asReversed()) }
+    }
 
     /** User-initiated: also asks the gateway to drop this device's peer (best effort). */
     fun signOut() {
@@ -161,7 +179,7 @@ class BoosterEngine(private val app: Application) {
         recorder = null
         disconnect()
         upd { freshState() }
-        scope.launch(Dispatchers.IO) { history.clear() }
+        clearPersistedHistory()
         scope.launch {
             if (last != null && pub != null)
                 servers.firstOrNull { it.id == last.serverId }?.let { runCatching { api.unregister(it, pub) } }
@@ -172,7 +190,7 @@ class BoosterEngine(private val app: Application) {
     private fun forceSignOut() {
         recorder = null
         disconnect()
-        scope.launch(Dispatchers.IO) { history.clear() }
+        clearPersistedHistory()
         store.clearSession(); store.clearLast()
         upd { freshState() }
     }
@@ -241,7 +259,15 @@ class BoosterEngine(private val app: Application) {
 
     fun setSmartSwitch(on: Boolean) { store.setSmartSwitch(on); policy.resetBaseline(); upd { it.copy(smartSwitch = on) } }
     fun setOverlay(on: Boolean) { store.setOverlayEnabled(on); upd { it.copy(overlayEnabled = on) } }
-    fun clearHistory() { upd { it.copy(history = emptyList()) }; scope.launch(Dispatchers.IO) { history.clear() } }
+    fun refreshOverlayPermission() {
+        val granted = runCatching { Settings.canDrawOverlays(app) }.getOrDefault(false)
+        upd { if (it.overlayPermissionGranted == granted) it else it.copy(overlayPermissionGranted = granted) }
+    }
+    fun clearHistory() { upd { it.copy(history = emptyList()) }; clearPersistedHistory() }
+
+    private fun clearPersistedHistory() {
+        scope.launch { historyMutex.withLock { withContext(Dispatchers.IO) { history.clear() } } }
+    }
     private fun overlayActive() = _s.value.overlayEnabled && runCatching { Settings.canDrawOverlays(app) }.getOrDefault(false)
 
     /** Ends the running session, stores it locally and uploads the summary (best effort). Call BEFORE tunnel.down(). */
@@ -252,7 +278,10 @@ class BoosterEngine(private val app: Application) {
         val r = rec.finish(System.currentTimeMillis(), reason)
         if (r.durationSec < 10 && r.samples == 0) return          // nothing worth keeping
         upd { it.copy(history = (listOf(r) + it.history).take(200)) }
-        scope.launch(Dispatchers.IO) { history.append(r); api.uploadSession(r) }
+        scope.launch {
+            historyMutex.withLock { withContext(Dispatchers.IO) { history.append(r) } }
+            api.uploadSession(r)
+        }
     }
 
     /** Fresh phone->gateway and gateway->game measurements for every server. */
@@ -318,7 +347,8 @@ class BoosterEngine(private val app: Application) {
                 upd { it.copy(before = before, status = "Selecting server…") }
                 val explicit = st.selectedServer
                 // An explicit choice is honoured with no silent failover; otherwise try preference/ranking with failover.
-                val server = establish(game, explicit ?: preferredFor(game), allowFailover = explicit == null,
+                val preferred = explicit ?: preferredFor(game)?.takeUnless { health.isBlocked(it.id, System.currentTimeMillis()) }
+                val server = establish(game, preferred, allowFailover = explicit == null,
                     maxAttempts = 3, firstDelayMs = 0, label = "Connecting")
                 onEstablished(game, server)
             } catch (e: CancellationException) { throw e
@@ -354,7 +384,11 @@ class BoosterEngine(private val app: Application) {
         var lastError: Exception? = null
         var attempt = 0
         while (attempt < maxAttempts) {
-            val server = candidate ?: rankServers(servers, game).firstOrNull { it.id !in tried } ?: break
+            val server = candidate ?: run {
+                val ranked = rankServers(servers, game)
+                val eligibleId = health.firstEligible(ranked.map { it.id }, tried, System.currentTimeMillis())
+                eligibleId?.let { id -> ranked.firstOrNull { it.id == id } }
+            } ?: break
             val wait = if (attempt == 0) firstDelayMs else 1500L * (attempt + 1)
             if (wait > 0) delay(wait)
             upd { it.copy(status = "$label (${attempt + 1}/$maxAttempts) – ${server.name}") }
@@ -476,7 +510,7 @@ class BoosterEngine(private val app: Application) {
 
     // ---------- smart switching ----------
     /** Look for a clearly better route while connected; switch only past the policy's margin. */
-    private fun evaluateSwitch(game: GameProfile, reason: String, liveCost: Double) {
+    private fun evaluateSwitch(game: GameProfile, reason: String) {
         if (switching) return
         switching = true
         scope.launch {
@@ -488,14 +522,16 @@ class BoosterEngine(private val app: Application) {
                 policy.markEvaluated(System.currentTimeMillis())
                 note("Smart switch: ${active.name} looks bad ($reason); checking alternatives")
                 val now = System.currentTimeMillis()
-                val best = measureServers(st.servers.filter { it.id != active.id }, game, bound = true)
-                    .filter { it.own.ok && !health.isBlocked(it.server.id, now) }
+                val measurements = measureServers(st.servers, game, bound = true)
+                val activeRoute = measurements.firstOrNull { it.server.id == active.id && it.own.ok }
+                val best = measurements.filter { it.server.id != active.id && it.own.ok && !health.isBlocked(it.server.id, now) }
                     .minByOrNull { it.cost }
                 updateBackups()
                 if (best == null) { note("Smart switch: no reachable alternative"); return@launch }
                 if (_s.value.activeServer?.id != active.id || !_s.value.connected) return@launch   // state moved on meanwhile
-                if (policy.shouldSwitch(liveCost, best.cost)) {
-                    note("Smart switch: ${active.name} -> ${best.server.name} (cost %.0f -> ~%.0f)".format(Locale.US, liveCost, best.cost))
+                if (activeRoute == null) { note("Smart switch: could not measure the active route for comparison"); return@launch }
+                if (policy.shouldSwitch(activeRoute.cost, best.cost)) {
+                    note("Smart switch: ${active.name} -> ${best.server.name} (estimated cost %.0f -> %.0f)".format(Locale.US, activeRoute.cost, best.cost))
                     recorder?.noteSwitch()
                     policy.onSwitched(System.currentTimeMillis())
                     reconnect(game, immediate = true, target = best.server)
@@ -539,7 +575,7 @@ class BoosterEngine(private val app: Application) {
                             val r = Probe.run(probeAddr ?: game.probeHost, game.probePort, if (showStats || smartOn) 5 else 3)
                             upd { it.copy(live = r) }
                             recorder?.addSample(r)
-                            if (smartOn) policy.onSample(System.currentTimeMillis(), r)?.let { evaluateSwitch(game, it, PathScore.cost(r)) }
+                            if (smartOn) policy.onSample(System.currentTimeMillis(), r)?.let { evaluateSwitch(game, it) }
                         } finally { probing = false }
                     }
                 }
