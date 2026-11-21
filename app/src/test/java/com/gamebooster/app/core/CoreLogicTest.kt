@@ -66,6 +66,25 @@ class SmartSwitchPolicyTest {
     }
 }
 
+class LifecycleGateTest {
+    @Test fun admitsOneTransitionAndRejectsOverlap() {
+        val gate = LifecycleGate()
+        assertTrue(gate.tryStart(LifecycleGate.Operation.CONNECT))
+        assertEquals(LifecycleGate.Operation.CONNECT, gate.current())
+        assertFalse(gate.tryStart(LifecycleGate.Operation.DISCONNECT))
+    }
+
+    @Test fun releaseAllowsNextTransitionAndIgnoresWrongOwner() {
+        val gate = LifecycleGate()
+        assertTrue(gate.tryStart(LifecycleGate.Operation.RECONNECT))
+        gate.finish(LifecycleGate.Operation.DISCONNECT)
+        assertEquals(LifecycleGate.Operation.RECONNECT, gate.current())
+        gate.finish(LifecycleGate.Operation.RECONNECT)
+        assertNull(gate.current())
+        assertTrue(gate.tryStart(LifecycleGate.Operation.DISCONNECT))
+    }
+}
+
 class RouteHealthTest {
     @Test fun tripsAfterTwoFailuresAndRecovers() {
         val h = RouteHealth(2, 1000)

@@ -75,6 +75,7 @@ class BoosterEngine(private val app: Application, private val tunnel: WireGuardE
     private val health = RouteHealth()
     private val policy = SmartSwitchPolicy()
     private val historyMutex = Mutex()
+    private val lifecycleGate = LifecycleGate()
     private var recorder: SessionRecorder? = null
     @Volatile private var switching = false
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -91,6 +92,7 @@ class BoosterEngine(private val app: Application, private val tunnel: WireGuardE
 
     private var monitorJob: Job? = null
     private var reconnectJob: Job? = null
+    private var connectJob: Job? = null
     private var netJob: Job? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var pendingConnect = false
@@ -369,11 +371,12 @@ class BoosterEngine(private val app: Application, private val tunnel: WireGuardE
         if (st.servers.isEmpty()) return upd { it.copy(error = "No servers available in the server directory.") }
         tunnel.consentIntent()?.let { pendingConnect = true; _needConsent.value = it; return }
         pendingConnect = false
+        if (!lifecycleGate.tryStart(LifecycleGate.Operation.CONNECT)) return
 
-        scope.launch {
-            upd { it.copy(busy = true, error = null, status = "Measuring baseline…", live = null) }
-            note("Connecting: ${game.displayName}")
+        connectJob = scope.launch {
             try {
+                upd { it.copy(busy = true, error = null, status = "Measuring baseline…", live = null) }
+                note("Connecting: ${game.displayName}")
                 BoosterService.start(app).getOrElse { throw IllegalStateException("Could not start background connection service.", it) }
                 probeAddr = Probe.resolve(game.probeHost)                       // system DNS, before the tunnel
                 val before = Probe.run(probeAddr ?: game.probeHost, game.probePort)
@@ -390,17 +393,28 @@ class BoosterEngine(private val app: Application, private val tunnel: WireGuardE
                 if (e is ApiException && e.code == 401) { forceSignOut(); return@launch }
                 note("Failed: ${e.message}")
                 upd { it.copy(busy = false, connected = false, status = "Disconnected", error = e.message ?: "Connection failed") }
+            } finally {
+                lifecycleGate.finish(LifecycleGate.Operation.CONNECT)
             }
         }
     }
 
     private fun disconnect() {
+        connectJob?.cancel()
+        connectJob = null
+        lifecycleGate.finish(LifecycleGate.Operation.CONNECT)
+        if (!lifecycleGate.tryStart(LifecycleGate.Operation.DISCONNECT)) return
         finishSession("user disconnected")
         monitorJob?.cancel(); reconnectJob?.cancel()
+        lifecycleGate.finish(LifecycleGate.Operation.RECONNECT)
         scope.launch {
-            tunnel.disconnect(); store.clearLast(); BoosterService.stop(app); sessionStart = 0
-            upd { it.copy(connected = false, reconnecting = false, busy = false, status = "Disconnected",
-                live = null, activeServer = null, handshakeAgeSec = null, dns = null) }
+            try {
+                tunnel.disconnect(); store.clearLast(); BoosterService.stop(app); sessionStart = 0
+                upd { it.copy(connected = false, reconnecting = false, busy = false, status = "Disconnected",
+                    live = null, activeServer = null, handshakeAgeSec = null, dns = null) }
+            } finally {
+                lifecycleGate.finish(LifecycleGate.Operation.DISCONNECT)
+            }
         }
     }
 
@@ -676,7 +690,11 @@ class BoosterEngine(private val app: Application, private val tunnel: WireGuardE
     // ---------- reconnect ----------
     /** [target] = a specific server to move to (smart switch); null = retry the current one, then fail over. */
     private fun reconnect(game: GameProfile, immediate: Boolean = false, target: Server? = null) {
+        connectJob?.cancel(); connectJob = null
         monitorJob?.cancel(); reconnectJob?.cancel()
+        lifecycleGate.finish(LifecycleGate.Operation.CONNECT)
+        lifecycleGate.finish(LifecycleGate.Operation.RECONNECT)
+        if (!lifecycleGate.tryStart(LifecycleGate.Operation.RECONNECT)) return
         reconnectJob = scope.launch {
             val st = _s.value
             val (rx, tx) = tunnel.traffic(); recorder?.addTraffic(rx, tx)       // counters restart with the next tunnel
@@ -698,6 +716,8 @@ class BoosterEngine(private val app: Application, private val tunnel: WireGuardE
                 note("Reconnect failed: ${e.message}")
                 upd { it.copy(reconnecting = false, connected = false, status = "Disconnected", activeServer = null,
                     error = "Connection lost and could not be restored. ${e.message ?: ""}".trim()) }
+            } finally {
+                lifecycleGate.finish(LifecycleGate.Operation.RECONNECT)
             }
         }
     }
