@@ -125,6 +125,21 @@ class BoosterEngine(private val app: Application, private val tunnel: WireGuardE
         networkCallback = null
         scope.cancel()
     }
+    /** Called by the service if Android rejects the actual foreground promotion after the start request succeeded. */
+    fun onForegroundServiceStartFailed(cause: Throwable?) {
+        scope.launch {
+            val message = "The background connection service could not start${cause?.message?.let { ": $it" } ?: "."}"
+            note(message)
+            monitorJob?.cancel()
+            reconnectJob?.cancel()
+            finishSession("foreground service failed")
+            runCatching { tunnel.disconnect() }
+            store.clearLast()
+            sessionStart = 0
+            upd { it.copy(connected = false, reconnecting = false, activeServer = null, live = null,
+                handshakeAgeSec = null, status = "Disconnected", error = message) }
+        }
+    }
 
     // ---------- startup: reconcile UI with the real tunnel ----------
     private suspend fun startup() {
