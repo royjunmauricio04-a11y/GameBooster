@@ -469,14 +469,17 @@ private fun HistoryTab(st: UiState, vm: MainViewModel) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SectionHeading("Session insights", "A local record of your recent game routes")
         Panel {
-            Text("Overview", fontSize = 16.sp)
-            Spacer(Modifier.height(6.dp))
-            MetricRow("Sessions", "${sum.sessions}", "")
-            MetricRow("Total time", fmtDur(sum.totalSec), "")
-            MetricRow("TCP connect vs direct", sum.avgLatencyDeltaPct?.let { "%+.0f%%".format(it) } ?: "—", "")
+            SectionHeading("All-time overview", "Performance indicators from saved sessions")
+            Spacer(Modifier.height(12.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                MetricTile("SESSIONS", "${sum.sessions}", "saved", Neon, Modifier.weight(1f))
+                MetricTile("PLAY TIME", fmtDur(sum.totalSec), "total", Violet, Modifier.weight(1f))
+                MetricTile("TCP DELTA", sum.avgLatencyDeltaPct?.let { "%+.0f%%".format(it) } ?: "—", "vs direct", if ((sum.avgLatencyDeltaPct ?: 0.0) < 0) Neon else Color(0xFFFFC857), Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(8.dp))
             MetricRow("Route switches", "${sum.switches}", "")
             MetricRow("Reconnects", "${sum.reconnects}", "")
-            MetricRow("Data", fmtBytes(sum.rxBytes + sum.txBytes), "")
+            MetricRow("Data transferred", fmtBytes(sum.rxBytes + sum.txBytes), "")
             Text("Negative = lower TCP connect time through the tunnel than direct. This is not in-game ping, results vary, " +
                 "and a session with few samples is a rough picture. Sessions are stored on this device (last 200) and " +
                 "a numbers-only summary is uploaded when you are signed in.",
