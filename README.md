@@ -1,14 +1,19 @@
 # GameBooster (Android)
 
-[![Download latest debug APK](https://img.shields.io/badge/Download-GameBooster%20v0.3.0-blue?logo=android)](https://github.com/royjunmauricio04-a11y/GameBooster/releases/download/gamebooster-latest/GameBooster-v0.3.0.apk)
+[![Download GameBooster v0.4.0 debug APK](https://img.shields.io/badge/Download-GameBooster%20v0.4.0-blue?logo=android)](https://github.com/royjunmauricio04-a11y/GameBooster/releases/download/v0.4.0/GameBooster-v0.4.0.apk)
 
-> Test/debug build only—not a Play Store release. This repository is private, so only people with repository access can download the APK. The app still needs a configured Supabase project and gateway to connect.
+> Public test/debug pre-release only—not a Play Store release or production-signed build. The app still needs a configured Supabase project and gateway to connect.
 
 Per-app WireGuard tunnel for games with real, honestly-labelled network measurements.
-Open this folder in Android Studio (it generates the Gradle wrapper).
+Open this folder in Android Studio or build with `./gradlew :app:assembleDebug` (Android SDK 34 required).
 
 ## Current app version
-`GameBooster v0.3.0` (Android version code 3). The APK asset is versioned so it is clear which build is being installed.
+`GameBooster v0.4.0` (Android version code 4). The linked APK is the versioned debug/test build.
+
+## v0.4.0 verification
+The `v0.4.0` tag points to commit `993f92c89630d3afd39a6449b0d2e2c19a4b2fe9`. [GitHub Actions run 44860514958](https://github.com/royjunmauricio04-a11y/GameBooster/actions/runs/44860514958) passed Android unit tests and `:app:assembleDebug` for that exact commit. The published APK was compared with the APK artifact downloaded from that run; both SHA-256 values are `e8cad199011dea5eb73aa78fda291b9cd0cf2570cc726cecee8a3314dafdabf4`, and the APK archive passed an integrity check.
+
+This verifies the tagged source, CI test/build, and release artifact match. It does **not** verify VPN behavior on a physical device, a live OCI gateway, production server availability, or production signing. The current-main tun2socks RFC is design documentation; tun2socks/SOCKS5 is not implemented in the v0.4.0 APK, which still uses WireGuard.
 
 ## Plug in credentials later
 1. `local.properties.example` -> `local.properties`: set `SUPABASE_URL`, `SUPABASE_ANON_KEY` (public anon key only).
@@ -26,9 +31,9 @@ com.gamebooster.app://auth/callback
 Do not leave the Supabase **Site URL** set to `http://localhost:3000`; use a real HTTPS page or the app callback appropriate for the project. Email confirmation must remain enabled. The Android app uses only the public anon/publishable key; never use a `service_role` or `sb_secret_…` key in the app or signup request.
 
 ### Build a configured APK from a phone
-1. In the private GitHub repository, open **Settings → Secrets and variables → Actions → New repository secret**.
+1. In the GitHub repository, open **Settings → Secrets and variables → Actions → New repository secret**.
 2. Add `SUPABASE_URL` (the HTTPS Supabase Project URL) and `SUPABASE_ANON_KEY` (the public anon JWT with `role: anon` or `sb_publishable_…`). The workflow rejects service-role JWTs and `sb_secret_…` keys; never bundle those in an Android APK.
-3. Open **Actions → Android debug APK → Run workflow** on the branch being tested. After the build succeeds, the README download button points to the updated private debug APK. Only people with repository access can download it.
+3. Open **Actions → Android debug APK → Run workflow** on the branch being tested. After the build succeeds, download the versioned APK from that run's artifact or the matching GitHub release. The README download button currently links to the public v0.4.0 pre-release and must be updated when a newer version is verified.
 
 If either secret is missing, CI can still run tests, but it will not replace the downloadable APK with an unconfigured build. The admin dashboard will need its own server-side secret setup; never put the Supabase `service_role` key in the browser, APK, README, or GitHub source.
 
@@ -37,11 +42,11 @@ If either secret is missing, CI can still run tests, but it will not replace the
 |---|---|
 | Gateway agent (`gateway/agent.py`) | **Tested**: 22 automated tests (`python3 -m unittest gateway/tests/test_agent.py`) against a fake `wg` and fake Supabase over real HTTP |
 | `gateway/setup.sh` | Syntax-checked only. **Never run** on an OCI VM |
-| Android app | **Compiled in GitHub Actions** with Android SDK 34 as a debug APK; not yet tested on a physical device |
-| `GameInputTest.kt` (JUnit) | Run in GitHub Actions |
+| Android app v0.4.0 | **Verified in GitHub Actions**: Android unit tests passed and debug APK assembled for tag commit `993f92c`; release APK hash matches that run's artifact. Not tested on a physical device |
+| Android unit tests | `CoreLogicTest.kt`, `AuthCallbackTokensTest.kt`, and `GameInputTest.kt` ran in the successful v0.4.0 CI job |
 | Supabase schema | **Never executed** |
 | Handshake gate, network-change reconnect, foreground service | Unverified on real devices |
-| v0.3 smart switch, history, overlay, circuit breaker | **Not compiled, not run** (hand-reviewed only); first CI run will tell |
+| Smart switch, history, overlay, circuit breaker | Included in the v0.4.0 Android CI build/unit-test run; real-device behavior remains unverified |
 
 ## Features
 - **Connect:** baseline probe (game IP resolved once, pre-tunnel) -> server (explicit > per-game preference > catalog preference > automatic) -> device key (on device, encrypted prefs) -> gateway verifies JWT, authorises key -> WireGuard up for the game package (+ this app, so live probes use the tunnel) -> **must complete a WireGuard handshake within 8 s**, otherwise that server fails (with a specific "UDP may be blocked" message) and the next one is tried.
@@ -53,13 +58,13 @@ If either secret is missing, CI can still run tests, but it will not replace the
 - **Gateway:** per-device peers (max 3/user), key-ownership checks, revoke (owner via `/revoke`, admin via CLI), 30-day stale expiry, startup reconcile, rate limits, 60 s token cache capped at token `exp`, SSRF-hardened `/probe` (allow-listed hosts, public IPs only), non-root service.
 - **Evidence for SOCKS5 decision:** failed connects are logged with a coarse reason (`handshake` / `register` / `other`); see `docs/SOCKS5_FEASIBILITY.md` (decision: not implemented yet).
 
-## v0.3 systems (new, uncompiled and untested on a device)
+## App systems (CI-compiled and unit-tested; not verified on a physical device)
 - **Smart server switching** (`core/SmartSwitchPolicy.kt`, off by default, toggle in Diagnostics → Settings): while connected, the live TCP-connect probe is watched. After 3 consecutive bad samples (>=5 % loss, no response, or latency > 1.8x baseline and +40 ms) the app measures the other servers **bound to the physical network** (so the probe does not go through our own tunnel) and switches only if one is cheaper by >=20 ms and >=25 %. Limits: 2 min switch cool-down, 1 min between re-evaluations. A switch re-establishes the tunnel (a few seconds), which can drop a game connection.
 - **Backup routes / circuit breaker** (`core/RouteHealth.kt`): a server that fails twice (handshake/register failure, or a dead tunnel that was not a network change) is skipped for 5 min, then gets one trial. Reconnect goes straight to the best backup instead of retrying a tripped server. The ranked standby list is shown on the Connect tab. **This is failover, not multi-hop**: chaining two gateways would need gateway-to-gateway WireGuard forwarding, which the gateway agent does not have.
 - **Session history & analytics** (`core/SessionRecord.kt`, `data/HistoryStore.kt`, History tab): per session, TCP-connect avg / best / p95 / jitter / loss vs the direct baseline, servers used, switches, reconnects, traffic, and a chart. Stored locally (last 200, JSON lines) and wiped on sign-out; a numbers-only summary is uploaded to `session_summaries` (run the new block at the end of `supabase/schema.sql`).
 - **In-game overlay** (`overlay/OverlayController.kt`, owned by `BoosterService`, off by default): draggable ping / jitter / loss HUD, needs the "Display over other apps" permission. Some competitive games or anti-cheat may object to overlay apps; use at your own risk.
 - **Probe cadence** (changed): overlay 5 s, UI open 10 s, smart switching while hidden 15 s, otherwise a light 3-sample probe every 60 s so history has data. The old "hidden = no probes" battery claim no longer holds.
-- **Tests**: `app/src/test/.../core/CoreLogicTest.kt` (policy, circuit breaker, recorder, codec, overlay text). Written but not run: no Kotlin/Android toolchain was available when they were authored.
+- **Tests**: `app/src/test/.../core/CoreLogicTest.kt` covers policy, circuit breaker, recorder, codec, and overlay text. The v0.4.0 CI job ran the Android unit-test task successfully.
 
 Operational setup, permissions, Supabase migration steps, and tuning guidance are in [`docs/V0.3_OPERATIONS.md`](docs/V0.3_OPERATIONS.md).
 
