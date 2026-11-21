@@ -12,6 +12,7 @@ Phase 2 — Android reliability. Three bounded increments are implemented and lo
 - `BoosterService.start()` now returns the synchronous start-request result. `BoosterEngine` surfaces request failure for new connections and stops a restored tunnel if the service request fails, rather than treating it as monitored. Unit tests cover the request-result wrapper only.
 - Network callback ownership is now explicit: registration failures are surfaced in diagnostics, and the process-scoped engine provides deterministic callback/coroutine cleanup for shutdown paths. Physical handoff timing and reconnect execution remain unverified.
 - `BoosterService` now catches failure during the actual `startForeground()` promotion, not only the initial service-start request; it notifies `BoosterEngine`, tears down the tunnel, and reports a user-visible error. Android service recovery and process-death behavior remain unverified.
+- Connect work is now tracked and cancelled when disconnect or reconnect begins, reducing late-completion races without changing routing or failover policy. Full Android callback and tunnel race behavior remains device-dependent.
 - Added initial AI context, architecture, and technical-debt documents.
 
 ## Verification and limitations
