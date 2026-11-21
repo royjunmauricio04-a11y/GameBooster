@@ -1,6 +1,6 @@
 # GameBooster (Android)
 
-[![Download GameBooster v0.4.0 debug APK](https://img.shields.io/badge/Download-GameBooster%20v0.4.0-blue?logo=android)](https://github.com/royjunmauricio04-a11y/GameBooster/releases/download/v0.4.0/GameBooster-v0.4.0.apk)
+[![Download GameBooster v0.4.5.0 debug APK](https://img.shields.io/badge/Download-GameBooster%20v0.4.5.0-blue?logo=android)](https://github.com/royjunmauricio04-a11y/GameBooster/releases/download/v0.4.5.0/GameBooster-v0.4.5.0.apk)
 
 > Public test/debug pre-release only—not a Play Store release or production-signed build. The app still needs a configured Supabase project and gateway to connect.
 
@@ -8,7 +8,10 @@ Per-app WireGuard tunnel for games with real, honestly-labelled network measurem
 Open this folder in Android Studio or build with `./gradlew :app:assembleDebug` (Android SDK 34 required).
 
 ## Current app version
-`GameBooster v0.4.0` (Android version code 4). The linked APK is the versioned debug/test build.
+`GameBooster v0.4.5.0` (Android version code 40500). The linked APK is the versioned debug/test build.
+
+## v0.4.5.0 verification
+The v0.4.5.0 release is built from the merged Phase 2 lifecycle-gate main branch. GitHub Actions must pass Android unit tests and `:app:assembleDebug` for the tagged commit before the release APK is published. This remains a debug/test APK and has not been verified on a physical device.
 
 ## v0.4.0 verification
 The `v0.4.0` tag points to commit `993f92c89630d3afd39a6449b0d2e2c19a4b2fe9`. [GitHub Actions run 44860514958](https://github.com/royjunmauricio04-a11y/GameBooster/actions/runs/44860514958) passed Android unit tests and `:app:assembleDebug` for that exact commit. The published APK was compared with the APK artifact downloaded from that run; both SHA-256 values are `e8cad199011dea5eb73aa78fda291b9cd0cf2570cc726cecee8a3314dafdabf4`, and the APK archive passed an integrity check.
@@ -33,7 +36,7 @@ Do not leave the Supabase **Site URL** set to `http://localhost:3000`; use a rea
 ### Build a configured APK from a phone
 1. In the GitHub repository, open **Settings → Secrets and variables → Actions → New repository secret**.
 2. Add `SUPABASE_URL` (the HTTPS Supabase Project URL) and `SUPABASE_ANON_KEY` (the public anon JWT with `role: anon` or `sb_publishable_…`). The workflow rejects service-role JWTs and `sb_secret_…` keys; never bundle those in an Android APK.
-3. Open **Actions → Android debug APK → Run workflow** on the branch being tested. After the build succeeds, download the versioned APK from that run's artifact or the matching GitHub release. The README download button currently links to the public v0.4.0 pre-release and must be updated when a newer version is verified.
+3. Open **Actions → Android debug APK → Run workflow** on the branch being tested. After the build succeeds, download the versioned APK from that run's artifact or the matching GitHub release. The current download button links to the v0.4.5.0 release.
 
 If either secret is missing, CI can still run tests, but it will not replace the downloadable APK with an unconfigured build. The admin dashboard will need its own server-side secret setup; never put the Supabase `service_role` key in the browser, APK, README, or GitHub source.
 
@@ -42,11 +45,11 @@ If either secret is missing, CI can still run tests, but it will not replace the
 |---|---|
 | Gateway agent (`gateway/agent.py`) | **Tested**: 22 automated tests (`python3 -m unittest gateway/tests/test_agent.py`) against a fake `wg` and fake Supabase over real HTTP |
 | `gateway/setup.sh` | Syntax-checked only. **Never run** on an OCI VM |
-| Android app v0.4.0 | **Verified in GitHub Actions**: Android unit tests passed and debug APK assembled for tag commit `993f92c`; release APK hash matches that run's artifact. Not tested on a physical device |
-| Android unit tests | `CoreLogicTest.kt`, `AuthCallbackTokensTest.kt`, and `GameInputTest.kt` ran in the successful v0.4.0 CI job |
+| Android app v0.4.5.0 | **Pending release CI**: Android unit tests and debug APK assembly must pass for the tagged commit. Not tested on a physical device |
+| Android unit tests | `CoreLogicTest.kt`, `AuthCallbackTokensTest.kt`, and `GameInputTest.kt` must run in the successful v0.4.5.0 CI job |
 | Supabase schema | **Never executed** |
 | Handshake gate, network-change reconnect, foreground service | Unverified on real devices |
-| Smart switch, history, overlay, circuit breaker | Included in the v0.4.0 Android CI build/unit-test run; real-device behavior remains unverified |
+| Smart switch, history, overlay, circuit breaker | Included in the v0.4.5.0 Android CI build/unit-test run; real-device behavior remains unverified |
 
 ## Features
 - **Connect:** baseline probe (game IP resolved once, pre-tunnel) -> server (explicit > per-game preference > catalog preference > automatic) -> device key (on device, encrypted prefs) -> gateway verifies JWT, authorises key -> WireGuard up for the game package (+ this app, so live probes use the tunnel) -> **must complete a WireGuard handshake within 8 s**, otherwise that server fails (with a specific "UDP may be blocked" message) and the next one is tried.
@@ -64,7 +67,7 @@ If either secret is missing, CI can still run tests, but it will not replace the
 - **Session history & analytics** (`core/SessionRecord.kt`, `data/HistoryStore.kt`, History tab): per session, TCP-connect avg / best / p95 / jitter / loss vs the direct baseline, servers used, switches, reconnects, traffic, and a chart. Stored locally (last 200, JSON lines) and wiped on sign-out; a numbers-only summary is uploaded to `session_summaries` (run the new block at the end of `supabase/schema.sql`).
 - **In-game overlay** (`overlay/OverlayController.kt`, owned by `BoosterService`, off by default): draggable ping / jitter / loss HUD, needs the "Display over other apps" permission. Some competitive games or anti-cheat may object to overlay apps; use at your own risk.
 - **Probe cadence** (changed): overlay 5 s, UI open 10 s, smart switching while hidden 15 s, otherwise a light 3-sample probe every 60 s so history has data. The old "hidden = no probes" battery claim no longer holds.
-- **Tests**: `app/src/test/.../core/CoreLogicTest.kt` covers policy, circuit breaker, recorder, codec, and overlay text. The v0.4.0 CI job ran the Android unit-test task successfully.
+- **Tests**: `app/src/test/.../core/CoreLogicTest.kt` covers policy, circuit breaker, recorder, codec, overlay text, and lifecycle admission. The v0.4.5.0 CI job must run the Android unit-test task successfully.
 
 Operational setup, permissions, Supabase migration steps, and tuning guidance are in [`docs/V0.3_OPERATIONS.md`](docs/V0.3_OPERATIONS.md).
 
