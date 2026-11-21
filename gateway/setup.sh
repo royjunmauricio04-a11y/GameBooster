@@ -87,6 +87,7 @@ SUPABASE_URL=https://YOUR-PROJECT.supabase.co
 SUPABASE_ANON_KEY=YOUR-ANON-PUBLIC-KEY
 WG_IFACE=wg0
 WG_SUBNET=${WG_SUBNET}
+# Use an IPv4/IPv6 literal; Android rejects DNS hostnames to prevent pre-tunnel lookups.
 WG_DNS=1.1.1.1
 MAX_DEVICES_PER_USER=3
 PEER_TTL_DAYS=30

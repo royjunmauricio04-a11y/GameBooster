@@ -17,6 +17,13 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
+internal fun requestForegroundService(startRequest: () -> Unit): Result<Unit> = try {
+    startRequest()
+    Result.success(Unit)
+} catch (e: Exception) {
+    Result.failure(e)
+}
+
 /** Foreground service whose only job is to keep the process (and BoosterEngine's monitor) alive while connected. */
 class BoosterService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -60,8 +67,9 @@ class BoosterService : Service() {
     companion object {
         private const val CHANNEL = "connection"
         private const val ID = 1
-        fun start(ctx: Context) {
-            runCatching { ContextCompat.startForegroundService(ctx, Intent(ctx, BoosterService::class.java)) }
+        fun start(ctx: Context): Result<Unit> = requestForegroundService {
+            ContextCompat.startForegroundService(ctx, Intent(ctx, BoosterService::class.java))
+            Unit
         }
         fun stop(ctx: Context) { runCatching { ctx.stopService(Intent(ctx, BoosterService::class.java)) } }
     }

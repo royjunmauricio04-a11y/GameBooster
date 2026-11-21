@@ -15,6 +15,9 @@ import com.gamebooster.app.core.*
 import com.gamebooster.app.data.*
 import com.gamebooster.app.vpn.Probe
 import com.gamebooster.app.vpn.TunnelController
+import com.gamebooster.app.vpn.VpnEngineStatus
+import com.gamebooster.app.vpn.WireGuardConfig
+import com.gamebooster.app.vpn.WireGuardEngine
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
@@ -65,10 +68,9 @@ class HandshakeException(message: String) : Exception(message)
  * Process-scoped connection engine. Owns tunnel lifecycle, monitoring, reconnect and failover so they keep
  * running while the Activity is gone (BoosterService keeps the process alive while connected).
  */
-class BoosterEngine(private val app: Application) {
+class BoosterEngine(private val app: Application, private val tunnel: WireGuardEngine = TunnelController(app)) {
     private val store = SessionStore(app)
     private val api = SupabaseApi(store)
-    private val tunnel = TunnelController(app)
     private val history = HistoryStore(app)
     private val health = RouteHealth()
     private val policy = SmartSwitchPolicy()
@@ -92,8 +94,7 @@ class BoosterEngine(private val app: Application) {
     private var netJob: Job? = null
     private var pendingConnect = false
     private var probeAddr: String? = null          // game probe IP resolved once, before the tunnel
-    private var lastNetSig: String? = null
-    private var wasOffline = false
+    private val networkTransitionPolicy = NetworkTransitionPolicy()
     private var sessionStart = 0L
     @Volatile private var uiVisible = true
     private val gwCache = HashMap<String, Pair<Long, ProbeResult?>>()   // gateway->game probes, 60 s
@@ -117,7 +118,7 @@ class BoosterEngine(private val app: Application) {
 
     // ---------- startup: reconcile UI with the real tunnel ----------
     private suspend fun startup() {
-        val tunnelWasUp = tunnel.isUp()
+        val tunnelWasUp = tunnel.status() == VpnEngineStatus.CONNECTED
         try { loadCatalog() }
         catch (e: ApiException) { if (e.code == 401) { forceSignOut(); return }; upd { it.copy(error = e.message) } }
         catch (e: Exception) { upd { it.copy(error = e.message ?: "Could not load servers") } }
@@ -128,16 +129,23 @@ class BoosterEngine(private val app: Application) {
         val game = last?.let { l -> st.games.firstOrNull { it.packageName == l.gamePackage } }
         val server = last?.let { l -> st.servers.firstOrNull { it.id == l.serverId } }
         if (game == null || server == null) {   // can't prove what this tunnel is for: shut it down, don't leave it orphaned
-            tunnel.down(); store.clearLast(); note("Shut down an unidentified tunnel at startup"); return
+            tunnel.disconnect(); store.clearLast(); note("Shut down an unidentified tunnel at startup"); return
         }
         probeAddr = Probe.resolve(game.probeHost)
-        lastNetSig = underlyingSignature()
+        networkTransitionPolicy.reset(underlyingSignature())
         sessionStart = System.currentTimeMillis()
         recorder = SessionRecorder(sessionStart, game.packageName, game.displayName, server.name, null)
         policy.reset()
+        val serviceStart = BoosterService.start(app)
+        if (serviceStart.isFailure) {
+            tunnel.disconnect(); store.clearLast(); sessionStart = 0; recorder = null
+            val message = "Could not start the background connection service; the restored tunnel was stopped."
+            note(message)
+            upd { it.copy(connected = false, reconnecting = false, activeServer = null, status = "Disconnected", error = message) }
+            return
+        }
         note("Resumed existing tunnel (${server.name})")
         upd { it.copy(selectedGame = game, activeServer = server, connected = true, status = "Connected") }
-        BoosterService.start(app)
         startMonitor(game)
     }
 
@@ -270,7 +278,7 @@ class BoosterEngine(private val app: Application) {
     }
     private fun overlayActive() = _s.value.overlayEnabled && runCatching { Settings.canDrawOverlays(app) }.getOrDefault(false)
 
-    /** Ends the running session, stores it locally and uploads the summary (best effort). Call BEFORE tunnel.down(). */
+    /** Ends the running session, stores it locally and uploads the summary (best effort). Call BEFORE tunnel.disconnect(). */
     private fun finishSession(reason: String) {
         val rec = recorder ?: return
         recorder = null
@@ -339,9 +347,9 @@ class BoosterEngine(private val app: Application) {
 
         scope.launch {
             upd { it.copy(busy = true, error = null, status = "Measuring baseline…", live = null) }
-            BoosterService.start(app)
             note("Connecting: ${game.displayName}")
             try {
+                BoosterService.start(app).getOrElse { throw IllegalStateException("Could not start background connection service.", it) }
                 probeAddr = Probe.resolve(game.probeHost)                       // system DNS, before the tunnel
                 val before = Probe.run(probeAddr ?: game.probeHost, game.probePort)
                 upd { it.copy(before = before, status = "Selecting server…") }
@@ -353,7 +361,7 @@ class BoosterEngine(private val app: Application) {
                 onEstablished(game, server)
             } catch (e: CancellationException) { throw e
             } catch (e: Exception) {
-                tunnel.down(); store.clearLast(); BoosterService.stop(app); sessionStart = 0
+                tunnel.disconnect(); store.clearLast(); BoosterService.stop(app); sessionStart = 0
                 if (e is ApiException && e.code == 401) { forceSignOut(); return@launch }
                 note("Failed: ${e.message}")
                 upd { it.copy(busy = false, connected = false, status = "Disconnected", error = e.message ?: "Connection failed") }
@@ -365,7 +373,7 @@ class BoosterEngine(private val app: Application) {
         finishSession("user disconnected")
         monitorJob?.cancel(); reconnectJob?.cancel()
         scope.launch {
-            tunnel.down(); store.clearLast(); BoosterService.stop(app); sessionStart = 0
+            tunnel.disconnect(); store.clearLast(); BoosterService.stop(app); sessionStart = 0
             upd { it.copy(connected = false, reconnecting = false, busy = false, status = "Disconnected",
                 live = null, activeServer = null, handshakeAgeSec = null, dns = null) }
         }
@@ -395,9 +403,9 @@ class BoosterEngine(private val app: Application) {
             var reason = "other"
             try {
                 val reg = api.register(server, keys.publicKey.toBase64())
-                tunnel.up(server, reg, keys, listOf(game.packageName, app.packageName))
+                tunnel.connect(WireGuardConfig(server, reg, keys, listOf(game.packageName, app.packageName)))
                 if (!awaitHandshake(server)) {
-                    tunnel.down()
+                    tunnel.disconnect()
                     throw HandshakeException("No WireGuard handshake from ${server.name} within ${HANDSHAKE_TIMEOUT_MS / 1000}s. " +
                         "UDP ${server.wgPort} may be blocked by this network or the gateway firewall.")
                 }
@@ -431,7 +439,7 @@ class BoosterEngine(private val app: Application) {
     private suspend fun onEstablished(game: GameProfile, server: Server) {
         store.saveLast(game.packageName, server.id)
         if (sessionStart == 0L) sessionStart = System.currentTimeMillis()
-        lastNetSig = underlyingSignature(); wasOffline = false
+        networkTransitionPolicy.reset(underlyingSignature())
         val rec = recorder
         if (rec == null) {
             policy.reset()
@@ -553,7 +561,7 @@ class BoosterEngine(private val app: Application) {
                 val age = server?.let { tunnel.handshakeAgeSec(it.publicKey) }
                 // Dead tunnel: service gone, or no handshake for 4 min after a 45 s grace period.
                 // (Persistent keepalive makes WireGuard re-handshake roughly every 2 min while up.)
-                val up = tunnel.isUp()
+                val up = tunnel.status() == VpnEngineStatus.CONNECTED
                 if (!up || (now - t0 > 45_000 && (age == null || age > 240))) {
                     onTunnelLost(game, if (!up) "VPN service stopped" else "no recent handshake")
                     return@launch
@@ -592,7 +600,7 @@ class BoosterEngine(private val app: Application) {
         monitorJob?.cancel()
         finishSession("connection lost")
         scope.launch {
-            tunnel.down(); store.clearLast(); BoosterService.stop(app); sessionStart = 0
+            tunnel.disconnect(); store.clearLast(); BoosterService.stop(app); sessionStart = 0
             upd { it.copy(connected = false, status = "Disconnected", activeServer = null, live = null,
                 error = "Connection lost ($reason). Auto-reconnect is off.") }
         }
@@ -630,17 +638,12 @@ class BoosterEngine(private val app: Application) {
         netJob?.cancel()
         netJob = scope.launch {
             delay(2000)                                   // debounce flapping
-            val sig = underlyingSignature()
-            if (sig == null) { wasOffline = true; return@launch }
-            val prev = lastNetSig
-            lastNetSig = sig
+            val reconnectRequested = networkTransitionPolicy.observe(underlyingSignature())
             val st = _s.value
             val game = st.selectedGame
-            if (st.connected && !st.reconnecting && game != null && (wasOffline || (prev != null && sig != prev))) {
-                wasOffline = false
+            if (st.connected && !st.reconnecting && game != null && reconnectRequested) {
                 onTunnelLost(game, "network changed", immediate = true)
             }
-            wasOffline = false
         }
     }
 
@@ -654,7 +657,7 @@ class BoosterEngine(private val app: Application) {
             if (target == null) recorder?.noteReconnect()
             upd { it.copy(connected = false, reconnecting = true, live = null, handshakeAgeSec = null,
                 status = if (target != null) "Switching route…" else "Reconnecting…") }
-            tunnel.down()
+            tunnel.disconnect()
             try {
                 // A server whose breaker is tripped is not retried first: go straight to the best backup.
                 val first = target ?: st.activeServer?.takeUnless { health.isBlocked(it.id, System.currentTimeMillis()) }
@@ -665,7 +668,7 @@ class BoosterEngine(private val app: Application) {
             } catch (e: Exception) {
                 if (e is ApiException && e.code == 401) { forceSignOut(); return@launch }
                 finishSession("reconnect failed")
-                tunnel.down(); store.clearLast(); BoosterService.stop(app); sessionStart = 0
+                tunnel.disconnect(); store.clearLast(); BoosterService.stop(app); sessionStart = 0
                 note("Reconnect failed: ${e.message}")
                 upd { it.copy(reconnecting = false, connected = false, status = "Disconnected", activeServer = null,
                     error = "Connection lost and could not be restored. ${e.message ?: ""}".trim()) }
