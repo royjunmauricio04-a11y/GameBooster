@@ -85,6 +85,8 @@ jobs:
           VERSION_NAME=$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)
           VERSION_CODE=$(sed -n 's/.*versionCode = \([0-9]*\).*/\1/p' app/build.gradle.kts | head -1)
           echo "artifact_name=GameBooster-v${VERSION_NAME}-code${VERSION_CODE}-debug" >> "$GITHUB_OUTPUT"
+          echo "version_name=${VERSION_NAME}" >> "$GITHUB_OUTPUT"
+          echo "version_code=${VERSION_CODE}" >> "$GITHUB_OUTPUT"
 
       - name: Upload versioned debug APK artifact
         uses: actions/upload-artifact@v4
@@ -94,18 +96,18 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Publish private latest APK release
+      - name: Update latest public debug APK release
         if: github.ref == 'refs/heads/main' && steps.supabase.outputs.configured == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           APK="app/build/outputs/apk/debug/app-debug.apk"
-          ASSET="$APK#GameBooster-v0.3.0.apk"
+          ASSET="$APK#GameBooster-v${{ steps.apk_version.outputs.version_name }}.apk"
           if gh release view gamebooster-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload gamebooster-latest "$ASSET" --clobber --repo "$GITHUB_REPOSITORY"
           else
             gh release create gamebooster-latest "$ASSET" \
               --title "Game Booster latest debug APK" \
-              --notes "Automated debug/test build. Private repository: download requires repository access. Not a Play Store release." \
+              --notes "Automated debug/test APK for GameBooster v${{ steps.apk_version.outputs.version_name }} (version code ${{ steps.apk_version.outputs.version_code }}). Public pre-release, not a Play Store build. Test VPN and gateway behavior on a spare device before relying on it." \
               --prerelease --repo "$GITHUB_REPOSITORY"
           fi
