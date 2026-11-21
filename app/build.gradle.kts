@@ -17,8 +17,8 @@ android {
         applicationId = "com.gamebooster.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 4
-        versionName = "0.4.0"
+        versionCode = 40500
+        versionName = "0.4.5.0"
         buildConfigField("String", "SUPABASE_URL", "\"${props.getProperty("SUPABASE_URL", "")}\"")
         buildConfigField("String", "SUPABASE_ANON_KEY", "\"${props.getProperty("SUPABASE_ANON_KEY", "")}\"")
     }
