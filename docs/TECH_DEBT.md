@@ -18,4 +18,4 @@
 ## Release and infrastructure
 - No physical-device end-to-end verification, live gateway deployment, or production signing has been completed.
 - Supabase schema has not been executed in a live project. OCI region is undecided; defer project creation/deployment until chosen.
-- Current Phase 1/2 working-tree build passes locally with JDK 17 and SDK 34; 53 Android JVM tests pass and a debug APK assembles. These do not establish physical-device behavior. The Phase 1/2 changes remain uncommitted.
+- Phase 1/2 working-tree source was committed and pushed to `main` as `8b0bf14`. Local JDK 17/SDK 34 build and all 53 Android JVM tests passed. The GitHub Actions run was intentionally canceled before its tests/artifact/public-release steps because pushing to `main` would invoke an existing workflow that may replace the public debug APK. Do not report remote CI success.

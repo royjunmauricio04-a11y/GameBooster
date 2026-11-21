@@ -13,12 +13,14 @@ Phase 2 — Android reliability. Three bounded increments are implemented and lo
 - Added initial AI context, architecture, and technical-debt documents.
 
 ## Verification and limitations
-`./gradlew --no-daemon :app:testDebugUnitTest :app:assembleDebug` passed with JDK 17 and Android SDK platform 34/build-tools 34.0.0. All 53 Android JVM tests passed (0 failures/errors/skips), and a 27 MB debug APK assembled. APK SHA-256: `50f5254faa1901dcb56386d9b4009a5a373916a55f1b5fc90faade6fce8f8651`.
+`./gradlew --no-daemon :app:testDebugUnitTest :app:assembleDebug` passed locally with JDK 17 and Android SDK platform 34/build-tools 34.0.0. All 53 Android JVM tests passed (0 failures/errors/skips), and a 27 MB debug APK assembled. APK SHA-256: `50f5254faa1901dcb56386d9b4009a5a373916a55f1b5fc90faade6fce8f8651`.
 
 The APK is an unconfigured debug/test build, not a production release. The service result covers only synchronous failure to submit `ContextCompat.startForegroundService`; it does not prove `onStartCommand()`/`startForeground()` succeeds or the service survives process death. No physical-device Wi-Fi/mobile handoff, callback timing, foreground-service recovery, DNS/IPv6 leak, live Supabase, or deployed gateway verification was performed. Gateway tests passed in Phase 0 (22 tests against fakes); no gateway code changed here.
 
+The GitHub Actions run for commit `8b0bf14` was canceled before Android tests, artifact upload, or the public debug-release update step. The local tests/build above are the validation evidence; remote CI was not completed.
+
 ## Latest verified source
-The build used the current working tree based on `main` commit `a58f61c`. Phase 1 and Phase 2 changes remain uncommitted and unpushed. Pure policy/parser tests and request-result tests do not establish Android radio, callback, tunnel, service, or DNS behavior.
+The source tree was based on `main` commit `a58f61c`; Phase 1/2 changes are now committed and pushed to `origin/main` as `8b0bf14` (followed by a documentation-only status correction). Pure policy/parser tests and request-result tests do not establish Android radio, callback, tunnel, service, or DNS behavior.
 
 ## Next action
 Continue Phase 2 with a focused Android service/callback lifecycle increment or authorized-device validation. Do not claim network recovery or DNS leak protection complete until tested on an Android device.
