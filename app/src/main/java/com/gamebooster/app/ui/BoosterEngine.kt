@@ -92,6 +92,7 @@ class BoosterEngine(private val app: Application, private val tunnel: WireGuardE
     private var monitorJob: Job? = null
     private var reconnectJob: Job? = null
     private var netJob: Job? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var pendingConnect = false
     private var probeAddr: String? = null          // game probe IP resolved once, before the tunnel
     private val networkTransitionPolicy = NetworkTransitionPolicy()
@@ -115,6 +116,15 @@ class BoosterEngine(private val app: Application, private val tunnel: WireGuardE
 
     /** Called from Activity onStart/onStop: probing and UI stats pause while nobody is looking (battery). */
     fun setUiVisible(v: Boolean) { uiVisible = v }
+    /** Release process-scoped coroutine and Android callback resources when the process is shutting down. */
+    fun shutdown() {
+        netJob?.cancel()
+        monitorJob?.cancel()
+        reconnectJob?.cancel()
+        networkCallback?.let { callback -> runCatching { cm.unregisterNetworkCallback(callback) } }
+        networkCallback = null
+        scope.cancel()
+    }
 
     // ---------- startup: reconcile UI with the real tunnel ----------
     private suspend fun startup() {
@@ -626,12 +636,13 @@ class BoosterEngine(private val app: Application, private val tunnel: WireGuardE
 
     private fun registerNetworkCallback() {
         val req = NetworkRequest.Builder().addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).build()
-        runCatching {
-            cm.registerNetworkCallback(req, object : ConnectivityManager.NetworkCallback() {
+        val callback = object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) = onNetChange()
                 override fun onLost(network: Network) = onNetChange()
-            })
-        }
+            }
+        runCatching { cm.registerNetworkCallback(req, callback) }
+            .onSuccess { networkCallback = callback }
+            .onFailure { note("Network monitoring unavailable; reconnect on handoff may be delayed") }
     }
 
     private fun onNetChange() {

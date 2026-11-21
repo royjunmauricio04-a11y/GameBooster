@@ -10,6 +10,7 @@ Phase 2 — Android reliability. Three bounded increments are implemented and lo
 - Added `NetworkTransitionPolicy` for initial, unchanged, changed, offline-to-online, and reset transitions; Android callback timing and reconnect execution remain in `BoosterEngine`.
 - Added `DnsServerAddress`, which parses numeric IPv4/IPv6 literals without name resolution and rejects hostnames before tunnel activation.
 - `BoosterService.start()` now returns the synchronous start-request result. `BoosterEngine` surfaces request failure for new connections and stops a restored tunnel if the service request fails, rather than treating it as monitored. Unit tests cover the request-result wrapper only.
+- Network callback ownership is now explicit: registration failures are surfaced in diagnostics, and the process-scoped engine provides deterministic callback/coroutine cleanup for shutdown paths. Physical handoff timing and reconnect execution remain unverified.
 - Added initial AI context, architecture, and technical-debt documents.
 
 ## Verification and limitations
