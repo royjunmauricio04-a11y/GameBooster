@@ -79,6 +79,21 @@ jobs:
       - name: Run Android tests and assemble debug APK
         run: ./gradlew --no-daemon :app:testDebugUnitTest :app:assembleDebug
 
+      - name: Read APK version
+        id: apk_version
+        run: |
+          VERSION_NAME=$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)
+          VERSION_CODE=$(sed -n 's/.*versionCode = \([0-9]*\).*/\1/p' app/build.gradle.kts | head -1)
+          echo "artifact_name=GameBooster-v${VERSION_NAME}-code${VERSION_CODE}-debug" >> "$GITHUB_OUTPUT"
+
+      - name: Upload versioned debug APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.apk_version.outputs.artifact_name }}
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Publish private latest APK release
         if: github.ref == 'refs/heads/main' && steps.supabase.outputs.configured == 'true'
         env:
